@@ -1,0 +1,4 @@
+python-socketio
+yt-dlp
+opencv-python
+pillow

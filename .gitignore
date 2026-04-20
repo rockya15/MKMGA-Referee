@@ -1,0 +1,27 @@
+# Node / frontend
+node_modules/
+client/node_modules/
+server/node_modules/
+client/dist/
+client/.vite/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Runtime artifacts
+server/uploads/
+server/data/
+*.log
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Local tunnel/download artifacts
+cloudflared-windows-amd64.exe
+cloudflared-windows-amd64.msi
+config.yml
