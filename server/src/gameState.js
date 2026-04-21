@@ -187,6 +187,7 @@ class GameState {
       contributedThisRace: 0,
       roundBet: 0,
       positions: [],
+      profileImageUrl: String(playerData.profileImageUrl || '').trim() || null,
       passwordHash,
       salt
     };
@@ -363,7 +364,8 @@ class GameState {
       occupiedPositions: {},
       currentPlayerIndex: 0,
       selectedCount: 0,
-      cascadeChainSpent: false
+      cascadeChainSpent: false,
+      cascadeChain: null,
     };
 
     this.setStage(STAGES.POSITION_ASSIGNMENT);
@@ -401,16 +403,21 @@ class GameState {
     }
   }
 
-  rollCascadeResult(isForcedDnf) {
-    const slots = isForcedDnf ? GENTLE_DNF_SLOTS[0] : HARSH_DNF_SLOTS[0];
+  rollCascadeResult(mode, level) {
+    const table = mode === 'gentle' ? GENTLE_DNF_SLOTS : HARSH_DNF_SLOTS;
+    const safeLevel = Math.max(0, Math.min(level, table.length - 1));
+    const dnfSlots = table[safeLevel];
+    // Roll 1–13: slots 1..dnfSlots = DNF, slots dnfSlots+1..13 = numbered positions
     const roll = Math.floor(Math.random() * 13) + 1;
 
-    if (roll <= slots) {
-      return { finalPosition: 'DNF', roll, dnfSlots: slots };
+    if (roll <= dnfSlots) {
+      return { finalPosition: 'DNF', roll, dnfSlots, mode, level: safeLevel };
     }
 
-    const landedPosition = String(Math.floor(Math.random() * 12) + 1);
-    return { finalPosition: landedPosition, roll, dnfSlots: slots };
+    // Map roll slot (dnfSlots+1 .. 13) → position number (1 .. 13-dnfSlots)
+    const positionIndex = roll - dnfSlots; // 1-based index among non-DNF slots
+    const landedPosition = String(positionIndex);
+    return { finalPosition: landedPosition, roll, dnfSlots, mode, level: safeLevel };
   }
 
   applyCascadeOutcome(player, outcome) {
@@ -443,6 +450,86 @@ class GameState {
     }
 
     return { ...outcome, displacedPlayerId: displacedId };
+  }
+
+  respondToDisplacedCascade(playerId, doCascade) {
+    if (!this.positionDraft?.cascadeChain) {
+      return { error: 'No pending cascade chain.' };
+    }
+
+    const chain = this.positionDraft.cascadeChain;
+    if (chain.pendingDisplacedId !== playerId) {
+      return { error: 'Not your cascade to respond to.' };
+    }
+
+    if (!doCascade) {
+      // Accept DNF — chain ends
+      this.positionDraft.cascadeChain = null;
+      this.positionDraft.cascadeChainSpent = true;
+      const complete = this.wheelOrder.every((id) => this.positionDraft.remainingByPlayer[id] === 0);
+      return { success: true, cascaded: false, complete };
+    }
+
+    // Player chooses to cascade
+    const { nextMode, nextLevel, originalCascaderId, originalCascaderNextHarshLevel } = chain;
+    const player = this.getPlayerById(playerId);
+    if (!player) return { error: 'Player not found.' };
+
+    const outcome = this.rollCascadeResult(nextMode, nextLevel);
+    const cascadeResult = this.applyCascadeOutcome(player, outcome);
+    cascadeResult.mode = nextMode;
+    cascadeResult.level = nextLevel;
+
+    if (outcome.finalPosition === 'DNF' || !cascadeResult.displacedPlayerId) {
+      // Chain ends: rolled DNF or landed on free position
+      this.positionDraft.cascadeChain = null;
+      this.positionDraft.cascadeChainSpent = true;
+    } else {
+      const newDisplacedId = cascadeResult.displacedPlayerId;
+      if (newDisplacedId === originalCascaderId && originalCascaderNextHarshLevel !== null) {
+        // Original harsh cascader re-displaced — continues harsh progression
+        const harshLevel = originalCascaderNextHarshLevel;
+        if (harshLevel >= HARSH_DNF_SLOTS.length) {
+          // Harsh table exhausted — guaranteed DNF, chain ends
+          this.positionDraft.cascadeChain = null;
+          this.positionDraft.cascadeChainSpent = true;
+        } else {
+          this.positionDraft.cascadeChain = {
+            originalCascaderId,
+            originalCascaderNextHarshLevel: harshLevel + 1,
+            pendingDisplacedId: newDisplacedId,
+            nextMode: 'harsh',
+            nextLevel: harshLevel,
+          };
+        }
+      } else {
+        // Regular gentle continuation
+        const newNextLevel = nextLevel + 1;
+        if (newNextLevel >= GENTLE_DNF_SLOTS.length) {
+          // Gentle table at maximum — guaranteed DNF level, chain ends
+          this.positionDraft.cascadeChain = null;
+          this.positionDraft.cascadeChainSpent = true;
+        } else {
+          this.positionDraft.cascadeChain = {
+            originalCascaderId,
+            originalCascaderNextHarshLevel,
+            pendingDisplacedId: newDisplacedId,
+            nextMode: 'gentle',
+            nextLevel: newNextLevel,
+          };
+        }
+      }
+    }
+
+    const complete = this.wheelOrder.every((id) => this.positionDraft.remainingByPlayer[id] === 0);
+    return { success: true, cascaded: true, outcome: cascadeResult, complete };
+  }
+
+  clearPendingCascade() {
+    if (this.positionDraft?.cascadeChain) {
+      this.positionDraft.cascadeChain = null;
+      this.positionDraft.cascadeChainSpent = true;
+    }
   }
 
   assignPositionWithOptions(playerId, position, options = {}) {
@@ -487,12 +574,28 @@ class GameState {
       this.positionDraft.mode === 'EXCLUSIVE' &&
       position === 'DNF' &&
       Boolean(options.cascade) &&
-      !this.positionDraft.cascadeChainSpent
+      !this.positionDraft.cascadeChainSpent &&
+      !this.positionDraft.cascadeChain
     ) {
-      const outcome = this.rollCascadeResult(forcedDnf);
+      const mode = forcedDnf ? 'gentle' : 'harsh';
+      const outcome = this.rollCascadeResult(mode, 0);
       cascade = this.applyCascadeOutcome(player, outcome);
-      this.positionDraft.cascadeChainSpent = true;
       cascade.forcedDnf = forcedDnf;
+      cascade.mode = mode;
+      cascade.level = 0;
+      if (outcome.finalPosition === 'DNF' || !cascade.displacedPlayerId) {
+        // Rolled DNF or landed on a free position — chain ends
+        this.positionDraft.cascadeChainSpent = true;
+      } else {
+        // Displaced someone — per spec, displaced enters gentle at "level 2" (0-indexed: 1)
+        this.positionDraft.cascadeChain = {
+          originalCascaderId: playerId,
+          originalCascaderNextHarshLevel: mode === 'harsh' ? 1 : null,
+          pendingDisplacedId: cascade.displacedPlayerId,
+          nextMode: 'gentle',
+          nextLevel: 1,
+        };
+      }
     }
 
     while (this.positionDraft.currentPlayerIndex < this.wheelOrder.length) {

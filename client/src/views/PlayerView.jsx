@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 
 const ALL_POSITIONS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', 'DNF'];
+const GENTLE_DNF_SLOTS = [1, 2, 4, 8, 13];
+const HARSH_DNF_SLOTS = [4, 8, 13];
 
 function PlayerView({ gameState, socket }) {
   const [mode, setMode] = useState('menu'); // 'menu' | 'joining' | 'reconnecting'
@@ -9,6 +11,19 @@ function PlayerView({ gameState, socket }) {
   const [raiseInput, setRaiseInput] = useState('');
   const [errorMsg, setErrorMsg] = useState(null);
   const storedCreds = useRef(null);
+
+  // ── Group-vote & timer state ─────────────────────────────────────────────────
+  const [groupVote, setGroupVote] = useState(null); // { timedOutPlayer, voters, options }
+  const [voteTimeLeft, setVoteTimeLeft] = useState(0);
+  const [voteCounts, setVoteCounts] = useState({});
+  const [myVote, setMyVote] = useState(null);
+  const [activeTimer, setActiveTimer] = useState(null); // { playerId, timeLeft, mode }
+
+  // ── Position-vote state ──────────────────────────────────────────────────────
+  const [positionVote, setPositionVote] = useState(null);
+  const [positionVoteTimeLeft, setPositionVoteTimeLeft] = useState(0);
+  const [positionVoteCounts, setPositionVoteCounts] = useState({});
+  const [myPositionVote, setMyPositionVote] = useState(null);
 
   // Auto-reconnect when socket gets a new ID after a drop
   useEffect(() => {
@@ -36,6 +51,72 @@ function PlayerView({ gameState, socket }) {
     return () => {
       socket.off('error', onError);
       socket.off('join-error', onJoinError);
+    };
+  }, [socket]);
+
+  useEffect(() => {
+    const onVoteStart = (data) => {
+      setGroupVote(data);
+      setVoteTimeLeft(data.endsInSeconds);
+      setVoteCounts({});
+      setMyVote(null);
+    };
+    const onVoteResult = () => {
+      setGroupVote(null);
+      setVoteTimeLeft(0);
+      setVoteCounts({});
+      setMyVote(null);
+    };
+    const onVoteTimerUpdate = ({ timeLeft }) => setVoteTimeLeft(timeLeft);
+    const onVoteUpdate = ({ voteCounts: vc }) => setVoteCounts(vc);
+  const onTimerUpdate = (data) => {
+      console.log('[Timer] timer-update received:', data);
+      setActiveTimer(data);
+    };
+    const onTimerClear = () => {
+      console.log('[Timer] timer-clear received');
+      setActiveTimer(null);
+    };
+    socket.on('group-vote-start', onVoteStart);
+    socket.on('group-vote-result', onVoteResult);
+    socket.on('vote-timer-update', onVoteTimerUpdate);
+    socket.on('vote-update', onVoteUpdate);
+    socket.on('timer-update', onTimerUpdate);
+    socket.on('timer-clear', onTimerClear);
+    return () => {
+      socket.off('group-vote-start', onVoteStart);
+      socket.off('group-vote-result', onVoteResult);
+      socket.off('vote-timer-update', onVoteTimerUpdate);
+      socket.off('vote-update', onVoteUpdate);
+      socket.off('timer-update', onTimerUpdate);
+      socket.off('timer-clear', onTimerClear);
+    };
+  }, [socket]);
+
+  useEffect(() => {
+    const onPosVoteStart = (data) => {
+      setPositionVote(data);
+      setPositionVoteTimeLeft(data.endsInSeconds);
+      setPositionVoteCounts({});
+      setMyPositionVote(null);
+    };
+    const onPosVoteResult = () => {
+      setPositionVote(null);
+      setPositionVoteTimeLeft(0);
+      setPositionVoteCounts({});
+      setMyPositionVote(null);
+    };
+    const onPosVoteTimerUpdate = ({ timeLeft }) => setPositionVoteTimeLeft(timeLeft);
+    const onPosVoteUpdate = ({ voteCounts: vc }) => setPositionVoteCounts(vc);
+    socket.on('position-vote-start', onPosVoteStart);
+    socket.on('position-vote-result', onPosVoteResult);
+    socket.on('position-vote-timer-update', onPosVoteTimerUpdate);
+    socket.on('position-vote-update', onPosVoteUpdate);
+    return () => {
+      socket.off('position-vote-start', onPosVoteStart);
+      socket.off('position-vote-result', onPosVoteResult);
+      socket.off('position-vote-timer-update', onPosVoteTimerUpdate);
+      socket.off('position-vote-update', onPosVoteUpdate);
     };
   }, [socket]);
 
@@ -71,6 +152,11 @@ function PlayerView({ gameState, socket }) {
   })();
 
   const cascadeSpent = positionDraft?.cascadeChainSpent ?? false;
+  const cascadeChain = positionDraft?.cascadeChain ?? null;
+  const iAmDisplacedInChain = !!(cascadeChain && cascadeChain.pendingDisplacedId === me?.id);
+  // Cascade is available for DNF picks when: EXCLUSIVE mode, chain not spent, no chain pending
+  const cascadeAvailable =
+    positionDraft?.mode === 'EXCLUSIVE' && !cascadeSpent && !cascadeChain;
 
   // ── Betting helpers ──────────────────────────────────────────────────────────
   const isMyBetTurn =
@@ -103,12 +189,14 @@ function PlayerView({ gameState, socket }) {
           }}
           onBack={() => { setMode('menu'); setServerError(null); }}
           error={serverError}
+          maxCashCap={gameState.hostSettings?.maxCashCap}
         />
       );
     }
     if (mode === 'reconnecting') {
       return (
         <ReconnectForm
+          players={gameState.players}
           onReconnect={(data) => {
             setServerError(null);
             storedCreds.current = { realName: data.realName, password: data.password };
@@ -149,6 +237,10 @@ function PlayerView({ gameState, socket }) {
   // ── Joined — render game phase ───────────────────────────────────────────────
   const stage = gameState.currentStage;
 
+  // Timer badge: only show when the server says it's MY timer
+  const myTimer = activeTimer?.playerId === me.id ? activeTimer : null;
+  const timerUrgent = myTimer !== null && myTimer.timeLeft <= 10;
+
   return (
     <div style={styles.root}>
       {/* Header */}
@@ -156,6 +248,24 @@ function PlayerView({ gameState, socket }) {
         <span style={styles.playerName}>{me.displayName}</span>
         <span style={styles.playerBalance}>${Number(me.balance).toFixed(2)}</span>
       </div>
+
+      {/* Full-width countdown strip — visible whenever any timer is active */}
+      {activeTimer && (
+        <div style={styles.timerStrip}>
+          <div
+            style={{
+              ...styles.timerStripFill,
+              width: `${Math.max(0, (activeTimer.timeLeft / (activeTimer.mode === 'position' ? 30 : 60)) * 100)}%`,
+              background: activeTimer.timeLeft <= 10 ? '#e74c3c' : activeTimer.timeLeft <= 20 ? '#e67e22' : '#2ecc71',
+            }}
+          />
+          <span style={styles.timerStripLabel}>
+            {activeTimer.playerId === me.id
+              ? `⏱ YOUR TURN — ${activeTimer.timeLeft}s remaining`
+              : `⏳ ${gameState.players.find((p) => p.id === activeTimer.playerId)?.displayName ?? 'Someone'} is deciding… ${activeTimer.timeLeft}s`}
+          </span>
+        </div>
+      )}
 
       {errorMsg && <div style={styles.errorBanner}>{errorMsg}</div>}
 
@@ -207,27 +317,144 @@ function PlayerView({ gameState, socket }) {
       {stage === 'POSITION_ASSIGNMENT' && (
         <div style={styles.phaseBox}>
           <div style={styles.phaseTitle}>Position Draft</div>
-          {!me.paidEntry ? (
-            <div style={styles.phaseInfo}>You skipped this race.</div>
-          ) : isMyPickTurn ? (
+
+          {/* Cascade displacement prompt — shown when I was displaced by a cascade chain */}
+          {iAmDisplacedInChain && (() => {
+            const table = cascadeChain.nextMode === 'gentle' ? GENTLE_DNF_SLOTS : HARSH_DNF_SLOTS;
+            const safeLevel = Math.min(cascadeChain.nextLevel, table.length - 1);
+            const dnfSlots = table[safeLevel];
+            const dnfPct = Math.round((dnfSlots / 13) * 100);
+            const label = cascadeChain.nextMode === 'gentle'
+              ? `Gentle Level ${safeLevel + 1}`
+              : `Harsh Spin ${safeLevel + 1}`;
+            return (
+              <div style={{ ...styles.cascadeBox, borderColor: '#a03030', background: '#1a0808' }}>
+                <div style={{ color: '#e74c3c', fontWeight: 'bold', fontSize: 18, marginBottom: 2 }}>
+                  ⚠️ You were displaced to DNF!
+                </div>
+                <div style={styles.phaseInfo}>
+                  {label} — {dnfSlots}/13 DNF slots ({dnfPct}% chance of DNF)
+                </div>
+                <div style={styles.actionRow}>
+                  <button
+                    style={{ ...styles.actionBtn, background: '#1a3a1a', color: '#2ecc71' }}
+                    onClick={() => socket.emit('cascade-response', { cascade: true })}
+                  >
+                    🎡 Cascade
+                  </button>
+                  <button
+                    style={{ ...styles.actionBtn, background: '#3a1a1a', color: '#e74c3c' }}
+                    onClick={() => socket.emit('cascade-response', { cascade: false })}
+                  >
+                    ✋ Accept DNF
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Position vote overlay / normal pick UI — hidden while I'm the pending displaced player */}
+          {!iAmDisplacedInChain && (positionVote ? (
+            positionVote.timedOutPlayer === me.id ? (
+              /* I’m the timed-out player */
+              <div style={styles.voteWaitBox}>
+                <div style={styles.voteWaitIcon}>⏳</div>
+                <div style={styles.voteWaitTitle}>Your peers are voting for your position{positionVote.picksNeeded > 1 ? 's' : ''}!</div>
+                <div style={styles.voteWaitSub}>You took too long — other players are choosing {positionVote.picksNeeded} position{positionVote.picksNeeded > 1 ? 's' : ''} for you.</div>
+                <div style={styles.voteCountdown}>{positionVoteTimeLeft}s remaining</div>
+                {Object.keys(positionVoteCounts).length > 0 && (
+                  <div style={styles.voteTally}>
+                    {positionVote.options.map((pos) => (positionVoteCounts[pos] ?? 0) > 0 ? (
+                      <div key={pos} style={styles.voteTallyRow}>
+                        <span style={styles.voteTallyLabel}>P{pos}</span>
+                        <span style={styles.voteTallyCount}>{positionVoteCounts[pos]}</span>
+                      </div>
+                    ) : null)}
+                  </div>
+                )}
+              </div>
+            ) : positionVote.voters.includes(me.id) ? (
+              myPositionVote ? (
+                /* Already voted */
+                <div style={styles.voteWaitBox}>
+                  <div style={styles.voteWaitTitle}>Voted: <strong>Position {myPositionVote}</strong></div>
+                  <div style={styles.voteCountdown}>{positionVoteTimeLeft}s remaining</div>
+                  {Object.keys(positionVoteCounts).length > 0 && (
+                    <div style={styles.voteTally}>
+                      {positionVote.options.map((pos) => (positionVoteCounts[pos] ?? 0) > 0 ? (
+                        <div key={pos} style={styles.voteTallyRow}>
+                          <span style={styles.voteTallyLabel}>P{pos}</span>
+                          <span style={styles.voteTallyCount}>{positionVoteCounts[pos]}</span>
+                        </div>
+                      ) : null)}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Cast your vote */
+                <div style={styles.voteBox}>
+                  <div style={styles.voteTitle}>
+                    🗽 Vote for{' '}
+                    <strong>
+                      {gameState.players.find((p) => p.id === positionVote.timedOutPlayer)?.displayName ?? 'them'}
+                    </strong>
+                  </div>
+                  <div style={styles.voteSub}>
+                    They timed out — pick a position for them! ({positionVote.picksNeeded} pick{positionVote.picksNeeded > 1 ? 's' : ''} needed, {positionVoteTimeLeft}s)
+                  </div>
+                  <div style={styles.positionGrid}>
+                    {positionVote.options.map((pos) => (
+                      <button
+                        key={pos}
+                        style={{ ...styles.posBtn, background: pos === 'DNF' ? '#3a1a1a' : '#1a2a3a', color: pos === 'DNF' ? '#e74c3c' : '#4fc3f7' }}
+                        onClick={() => {
+                          socket.emit('position-vote', { position: pos });
+                          setMyPositionVote(pos);
+                        }}
+                      >
+                        {pos}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
+            ) : (
+              /* Not a voter (skipped race, etc.) */
+              <div style={styles.phaseInfo}>🗽 Position vote in progress… ({positionVoteTimeLeft}s)</div>
+            )
+          ) : (
+            /* Normal pick UI */
+            !me.paidEntry ? (
+              <div style={styles.phaseInfo}>You skipped this race.</div>
+            ) : isMyPickTurn && myTimer ? (
             <>
               <div style={styles.phaseInfo}>Your turn! Pick {picksRemaining} position(s).</div>
               <div style={styles.positionGrid}>
-                {availablePositions.map((pos) => (
-                  <button
-                    key={pos}
-                    style={{ ...styles.posBtn, background: pos === 'DNF' ? '#3a1a1a' : '#1a2a1a' }}
-                    onClick={() => {
-                      if (pos === 'DNF' && !cascadeSpent) {
-                        setPendingDnf(true);
-                      } else {
-                        pickPosition(pos);
-                      }
-                    }}
-                  >
-                    {pos}
-                  </button>
-                ))}
+                {availablePositions.map((pos) => {
+                  const isDnf = pos === 'DNF';
+                  const showGlow = isDnf && cascadeAvailable;
+                  return (
+                    <button
+                      key={pos}
+                      className={showGlow ? 'cascade-dnf-available' : undefined}
+                      style={{
+                        ...styles.posBtn,
+                        background: isDnf ? (showGlow ? '#2a1500' : '#3a1a1a') : '#1a2a1a',
+                        color: isDnf ? '#e74c3c' : '#fff',
+                        border: showGlow ? '1px solid #ff6400' : '1px solid #444',
+                      }}
+                      onClick={() => {
+                        if (isDnf && !cascadeSpent) {
+                          setPendingDnf(true);
+                        } else {
+                          pickPosition(pos);
+                        }
+                      }}
+                    >
+                      {pos}
+                    </button>
+                  );
+                })}
               </div>
               {pendingDnf && (
                 <div style={styles.cascadeBox}>
@@ -246,13 +473,16 @@ function PlayerView({ gameState, socket }) {
                 </div>
               )}
             </>
+          ) : isMyPickTurn ? (
+            <div style={styles.phaseInfo}>🎡 Spinning… get ready to pick!</div>
           ) : (
             <div style={styles.phaseInfo}>
               {me.positions?.length > 0
                 ? `Your positions: ${me.positions.join(', ')} — waiting for others…`
                 : 'Waiting for your turn…'}
             </div>
-          )}
+          )
+          ))} {/* end !iAmDisplacedInChain block */}
         </div>
       )}
 
@@ -267,57 +497,134 @@ function PlayerView({ gameState, socket }) {
           {me.positions?.length > 0 && (
             <div style={styles.phaseInfo}>Your positions: {me.positions.join(', ')}</div>
           )}
-          {me.allIn ? (
-            <div style={styles.phaseInfo}>You are all-in — waiting for others…</div>
-          ) : me.folded ? (
-            <div style={styles.phaseInfo}>You folded — waiting for others…</div>
-          ) : !me.paidEntry ? (
-            <div style={styles.phaseInfo}>You skipped this race.</div>
-          ) : isMyBetTurn ? (
-            <div style={styles.actionCol}>
-              {canCheck ? (
-                <button style={styles.actionBtn} onClick={() => socket.emit('betting-action', { action: 'check' })}>
-                  Check
-                </button>
-              ) : (
-                <button style={styles.actionBtn} onClick={() => socket.emit('betting-action', { action: 'call' })}>
-                  Call ${Number(Math.min(currentBet - (me.roundBet ?? 0), me.balance)).toFixed(2)}
-                </button>
-              )}
-              {me.skipFoldTokenAvailable && (
-                <button
-                  style={{ ...styles.actionBtn, background: '#3a1a1a' }}
-                  onClick={() => socket.emit('betting-action', { action: 'fold' })}
-                >
-                  Fold (use token)
-                </button>
-              )}
-              {canRaise && (
-                <div style={styles.raiseRow}>
-                  <input
-                    style={styles.raiseInput}
-                    type="number"
-                    step="0.25"
-                    min={currentBet + 0.25}
-                    max={me.balance + (me.roundBet ?? 0)}
-                    placeholder="Raise to…"
-                    value={raiseInput}
-                    onChange={(e) => setRaiseInput(e.target.value)}
-                  />
-                  <button
-                    style={styles.actionBtn}
-                    onClick={() => {
-                      socket.emit('betting-action', { action: 'raise', amount: parseFloat(raiseInput) });
-                      setRaiseInput('');
-                    }}
-                  >
-                    Raise
-                  </button>
+
+          {/* ── Group vote is active ─────────────────────────────── */}
+          {groupVote ? (
+            groupVote.timedOutPlayer === me.id ? (
+              /* I'm the timed-out player */
+              <div style={styles.voteWaitBox}>
+                <div style={styles.voteWaitIcon}>⏳</div>
+                <div style={styles.voteWaitTitle}>Your peers are deciding for you</div>
+                <div style={styles.voteWaitSub}>You took too long — other players are voting on your action.</div>
+                <div style={styles.voteCountdown}>{voteTimeLeft}s remaining</div>
+                {Object.keys(voteCounts).length > 0 && (
+                  <div style={styles.voteTally}>
+                    {groupVote.options.map((opt) => (
+                      <div key={opt} style={styles.voteTallyRow}>
+                        <span style={styles.voteTallyLabel}>{opt.charAt(0).toUpperCase() + opt.slice(1)}</span>
+                        <span style={styles.voteTallyCount}>{voteCounts[opt] ?? 0}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : groupVote.voters.includes(me.id) ? (
+              /* I'm an eligible voter */
+              myVote ? (
+                <div style={styles.voteWaitBox}>
+                  <div style={styles.voteWaitTitle}>Vote cast: <strong>{myVote.charAt(0).toUpperCase() + myVote.slice(1)}</strong></div>
+                  <div style={styles.voteCountdown}>{voteTimeLeft}s remaining</div>
+                  {Object.keys(voteCounts).length > 0 && (
+                    <div style={styles.voteTally}>
+                      {groupVote.options.map((opt) => (
+                        <div key={opt} style={styles.voteTallyRow}>
+                          <span style={styles.voteTallyLabel}>{opt.charAt(0).toUpperCase() + opt.slice(1)}</span>
+                          <span style={styles.voteTallyCount}>{voteCounts[opt] ?? 0}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              ) : (
+                <div style={styles.voteBox}>
+                  <div style={styles.voteTitle}>
+                    🗳 Vote for{' '}
+                    <strong>
+                      {gameState.players.find((p) => p.id === groupVote.timedOutPlayer)?.displayName ?? 'them'}
+                    </strong>
+                  </div>
+                  <div style={styles.voteSub}>They timed out — choose their action! ({voteTimeLeft}s)</div>
+                  <div style={styles.actionCol}>
+                    {groupVote.options.map((opt) => (
+                      <button
+                        key={opt}
+                        style={{
+                          ...styles.actionBtn,
+                          background: opt === 'fold' ? '#3a1a1a' : '#1a3a1a',
+                          color: opt === 'fold' ? '#e74c3c' : '#2ecc71',
+                          fontSize: 18,
+                          padding: '14px 20px',
+                        }}
+                        onClick={() => {
+                          socket.emit('group-vote', { action: opt });
+                          setMyVote(opt);
+                        }}
+                      >
+                        {opt.charAt(0).toUpperCase() + opt.slice(1)}
+                        {opt === 'fold' ? ' (uses their token)' : ''}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
+            ) : (
+              /* I'm not involved in this vote (skipped / folded / all-in) */
+              <div style={styles.phaseInfo}>Vote in progress… ({voteTimeLeft}s)</div>
+            )
           ) : (
-            <div style={styles.phaseInfo}>Waiting for your turn…</div>
+            /* ── Normal betting UI ───────────────────────────────── */
+            me.allIn ? (
+              <div style={styles.phaseInfo}>You are all-in — waiting for others…</div>
+            ) : me.folded ? (
+              <div style={styles.phaseInfo}>You folded — waiting for others…</div>
+            ) : !me.paidEntry ? (
+              <div style={styles.phaseInfo}>You skipped this race.</div>
+            ) : isMyBetTurn ? (
+              <div style={styles.actionCol}>
+                {canCheck ? (
+                  <button style={styles.actionBtn} onClick={() => socket.emit('betting-action', { action: 'check' })}>
+                    Check
+                  </button>
+                ) : (
+                  <button style={styles.actionBtn} onClick={() => socket.emit('betting-action', { action: 'call' })}>
+                    Call ${Number(Math.min(currentBet - (me.roundBet ?? 0), me.balance)).toFixed(2)}
+                  </button>
+                )}
+                {me.skipFoldTokenAvailable && (
+                  <button
+                    style={{ ...styles.actionBtn, background: '#3a1a1a' }}
+                    onClick={() => socket.emit('betting-action', { action: 'fold' })}
+                  >
+                    Fold (use token)
+                  </button>
+                )}
+                {canRaise && (
+                  <div style={styles.raiseRow}>
+                    <input
+                      style={styles.raiseInput}
+                      type="number"
+                      step="0.25"
+                      min={currentBet + 0.25}
+                      max={me.balance + (me.roundBet ?? 0)}
+                      placeholder="Raise to…"
+                      value={raiseInput}
+                      onChange={(e) => setRaiseInput(e.target.value)}
+                    />
+                    <button
+                      style={styles.actionBtn}
+                      onClick={() => {
+                        socket.emit('betting-action', { action: 'raise', amount: parseFloat(raiseInput) });
+                        setRaiseInput('');
+                      }}
+                    >
+                      Raise
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={styles.phaseInfo}>Waiting for your turn…</div>
+            )
           )}
         </div>
       )}
@@ -371,7 +678,7 @@ function PlayerView({ gameState, socket }) {
 }
 
 // ── JoinForm ─────────────────────────────────────────────────────────────────
-function JoinForm({ onJoin, onBack, error }) {
+function JoinForm({ onJoin, onBack, error, maxCashCap }) {
   const [formData, setFormData] = useState({
     displayName: '',
     realName: '',
@@ -379,9 +686,35 @@ function JoinForm({ onJoin, onBack, error }) {
     funStatement: '',
     password: '',
     confirmPassword: '',
+    profileImageUrl: '',
   });
   const [checks, setChecks] = useState({ rules: false, fairy: false, bibi: false, opcc: false, fy: false });
   const [localError, setLocalError] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState(null);
+
+  const handleImageChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setLocalError(null);
+    try {
+      const body = new FormData();
+      body.append('profileImage', file);
+      const res = await fetch('/api/upload-profile', { method: 'POST', body });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Upload failed');
+      }
+      const { imageUrl } = await res.json();
+      setFormData((prev) => ({ ...prev, profileImageUrl: imageUrl }));
+      setPreviewUrl(imageUrl);
+    } catch (err) {
+      setLocalError(err.message || 'Image upload failed. Try a smaller file (max 5MB, JPEG/PNG/WebP).');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const allChecked = checks.rules && checks.fairy && checks.bibi && checks.opcc && checks.fy;
 
@@ -439,6 +772,26 @@ function JoinForm({ onJoin, onBack, error }) {
         {displayError && (
           <div style={{ ...styles.joinWarning, marginBottom: 10 }}>{displayError}</div>
         )}
+
+        {/* Profile picture */}
+        <div style={styles.avatarRow}>
+          {previewUrl ? (
+            <img src={previewUrl} alt="avatar" style={styles.avatarPreview} />
+          ) : (
+            <div style={styles.avatarPlaceholder}>?</div>
+          )}
+          <label style={styles.avatarUploadBtn}>
+            {uploading ? 'Uploading…' : previewUrl ? 'Change Photo' : 'Upload Photo (optional)'}
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              style={{ display: 'none' }}
+              onChange={handleImageChange}
+              disabled={uploading}
+            />
+          </label>
+        </div>
+
         <input
           style={styles.joinInput}
           type="text"
@@ -459,7 +812,7 @@ function JoinForm({ onJoin, onBack, error }) {
           style={styles.joinInput}
           type="text"
           inputMode="decimal"
-          placeholder="Cash Amount (e.g. $21.00)"
+          placeholder={maxCashCap != null ? `Cash Amount (Max: $${Number(maxCashCap).toFixed(2)})` : 'Cash Amount (e.g. $21.00)'}
           value={formData.cashAmount}
           onChange={(e) => {
             const raw = e.target.value.replace(/[^0-9.]/g, '');
@@ -543,42 +896,75 @@ function JoinForm({ onJoin, onBack, error }) {
 }
 
 // ── ReconnectForm ─────────────────────────────────────────────────────────────
-function ReconnectForm({ onReconnect, onBack, error }) {
-  const [formData, setFormData] = useState({ realName: '', password: '' });
+function ReconnectForm({ players, onReconnect, onBack, error }) {
+  const [selected, setSelected] = useState(null); // player object
+  const [password, setPassword] = useState('');
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onReconnect(formData);
+    onReconnect({ realName: selected.realName, password });
   };
 
+  // Step 2 — password input after selecting a player
+  if (selected) {
+    const initial = (selected.displayName || selected.realName || '?')[0].toUpperCase();
+    return (
+      <div style={styles.root}>
+        <div style={styles.joinHeaderRow}>
+          <div style={styles.joinHeader}>Reconnect</div>
+          <button type="button" style={styles.backBtn} onClick={() => { setSelected(null); setPassword(''); }}>← Back</button>
+        </div>
+        <div style={styles.rcSelectedCard}>
+          {selected.profileImageUrl
+            ? <img src={selected.profileImageUrl} alt="" style={styles.rcSelectedAvatar} />
+            : <div style={{ ...styles.rcSelectedAvatar, ...styles.rcAvatarFallback }}>{initial}</div>}
+          <div>
+            <div style={styles.rcSelectedName}>{selected.displayName}</div>
+            <div style={styles.rcSelectedReal}>{selected.realName}</div>
+          </div>
+        </div>
+        <form onSubmit={handleSubmit} style={{ ...styles.joinForm, marginTop: 0 }}>
+          {error && <div style={{ ...styles.joinWarning, marginBottom: 10 }}>{error}</div>}
+          <input
+            style={styles.joinInput}
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoFocus
+            required
+          />
+          <button type="submit" style={{ ...styles.joinBtn, marginTop: 16 }}>Reconnect</button>
+        </form>
+      </div>
+    );
+  }
+
+  // Step 1 — pick a player card
   return (
     <div style={styles.root}>
       <div style={styles.joinHeaderRow}>
-        <div style={styles.joinHeader}>Reconnect</div>
+        <div style={styles.joinHeader}>Who are you?</div>
         <button type="button" style={styles.backBtn} onClick={onBack}>← Back</button>
       </div>
-      <form onSubmit={handleSubmit} style={styles.joinForm}>
-        {error && <div style={{ ...styles.joinWarning, marginBottom: 10 }}>{error}</div>}
-        <input
-          style={styles.joinInput}
-          type="text"
-          placeholder="Real Name"
-          value={formData.realName}
-          onChange={(e) => setFormData({ ...formData, realName: e.target.value })}
-          required
-        />
-        <input
-          style={styles.joinInput}
-          type="password"
-          placeholder="Password"
-          value={formData.password}
-          onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-          required
-        />
-        <button type="submit" style={{ ...styles.joinBtn, marginTop: 16 }}>
-          Reconnect
-        </button>
-      </form>
+      {error && <div style={{ ...styles.joinWarning, margin: '0 20px 10px' }}>{error}</div>}
+      <div style={styles.rcGrid}>
+        {players.map((p) => {
+          const init = (p.displayName || p.realName || '?')[0].toUpperCase();
+          return (
+            <button key={p.realName} style={styles.rcCard} onClick={() => setSelected(p)}>
+              {p.profileImageUrl
+                ? <img src={p.profileImageUrl} alt="" style={styles.rcCardAvatar} />
+                : <div style={{ ...styles.rcCardAvatar, ...styles.rcAvatarFallback }}>{init}</div>}
+              <div style={styles.rcCardDisplayName}>{p.displayName}</div>
+              <div style={styles.rcCardRealName}>{p.realName}</div>
+            </button>
+          );
+        })}
+        {players.length === 0 && (
+          <div style={{ color: '#888', textAlign: 'center', padding: '40px 20px' }}>No players found.</div>
+        )}
+      </div>
     </div>
   );
 }
@@ -656,23 +1042,202 @@ const styles = {
     padding: '14px',
     cursor: 'pointer',
   },
+  // ── Reconnect card picker
+  rcGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, 1fr)',
+    gap: 14,
+    padding: '16px 20px',
+  },
+  rcCard: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 8,
+    background: '#1a1a2e',
+    border: '2px solid #333',
+    borderRadius: 12,
+    padding: '16px 10px',
+    cursor: 'pointer',
+    color: '#fff',
+    fontFamily: "'Segoe UI', sans-serif",
+    transition: 'border-color 0.15s',
+  },
+  rcCardAvatar: {
+    width: 64,
+    height: 64,
+    borderRadius: '50%',
+    objectFit: 'cover',
+    border: '2px solid #555',
+  },
+  rcAvatarFallback: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: '#2a2a4a',
+    color: '#f0c040',
+    fontSize: 26,
+    fontWeight: 'bold',
+  },
+  rcCardDisplayName: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#f0c040',
+    textAlign: 'center',
+    wordBreak: 'break-word',
+  },
+  rcCardRealName: {
+    fontSize: 12,
+    color: '#aaa',
+    textAlign: 'center',
+    wordBreak: 'break-word',
+  },
+  rcSelectedCard: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 16,
+    background: '#1a1a2e',
+    border: '2px solid #f0c040',
+    borderRadius: 12,
+    padding: '16px 20px',
+    margin: '0 20px 20px',
+  },
+  rcSelectedAvatar: {
+    width: 72,
+    height: 72,
+    borderRadius: '50%',
+    objectFit: 'cover',
+    border: '2px solid #f0c040',
+    flexShrink: 0,
+  },
+  rcSelectedName: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#f0c040',
+  },
+  rcSelectedReal: {
+    fontSize: 13,
+    color: '#aaa',
+    marginTop: 2,
+  },
+  avatarRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 14,
+    padding: '4px 0',
+  },
+  avatarPreview: {
+    width: 64,
+    height: 64,
+    borderRadius: '50%',
+    objectFit: 'cover',
+    border: '2px solid #444',
+    flexShrink: 0,
+  },
+  avatarPlaceholder: {
+    width: 64,
+    height: 64,
+    borderRadius: '50%',
+    background: '#222',
+    border: '2px solid #444',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 28,
+    color: '#555',
+    flexShrink: 0,
+  },
+  avatarUploadBtn: {
+    background: '#1a2a3a',
+    color: '#4fc3f7',
+    border: '1px solid #2a4a5a',
+    borderRadius: 6,
+    fontSize: 14,
+    padding: '8px 14px',
+    cursor: 'pointer',
+  },
   // ── In-game screens
   playerHeader: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: '12px 20px',
+    padding: '10px 20px',
     background: '#111',
     borderBottom: '1px solid #333',
   },
-  playerName: { fontSize: 18, fontWeight: 'bold', color: '#f0c040' },
-  playerBalance: { fontSize: 20, fontWeight: 'bold', color: '#2ecc71' },
+  playerName: { fontSize: 16, fontWeight: 'bold', color: '#f0c040', flex: 1 },
+  playerBalance: { fontSize: 20, fontWeight: 'bold', color: '#2ecc71', flex: 1, textAlign: 'right' },
+  // ── Timer badge (center of header)
+  timerBadge: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    border: '2px solid',
+    borderRadius: 10,
+    padding: '3px 16px',
+    minWidth: 60,
+    transition: 'border-color 0.3s, background 0.3s',
+  },
+  timerBadgeNum: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    lineHeight: 1,
+    transition: 'color 0.3s',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  timerBadgeLabel: {
+    fontSize: 9,
+    fontWeight: 'bold',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginTop: 1,
+    transition: 'color 0.3s',
+  },
   errorBanner: {
     background: '#3a0000',
     color: '#ff6b6b',
     padding: '10px 20px',
     fontSize: 14,
     borderBottom: '1px solid #660000',
+  },
+  // ── Full-width timer strip (below header)
+  timerStrip: {
+    position: 'relative',
+    height: 36,
+    background: '#0a0a0a',
+    borderBottom: '1px solid #222',
+    overflow: 'hidden',
+    flexShrink: 0,
+  },
+  timerStripFill: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    height: '100%',
+    transition: 'width 0.85s linear, background 0.3s',
+    opacity: 0.35,
+  },
+  timerStripLabel: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#fff',
+    whiteSpace: 'nowrap',
+    letterSpacing: 0.5,
+  },
+  // ── Debug box
+  debugBox: {
+    background: '#0a0a20',
+    border: '1px solid #2244aa',
+    color: '#8899ff',
+    fontSize: 11,
+    padding: '6px 14px',
+    lineHeight: 1.6,
+    fontFamily: 'monospace',
+    flexShrink: 0,
   },
   phaseBox: {
     padding: '24px 20px',
@@ -748,6 +1313,55 @@ const styles = {
     padding: '10px 12px',
     width: 120,
   },
+  // ── Group vote (voter)
+  voteBox: {
+    background: '#1a1a2e',
+    border: '2px solid #4444aa',
+    borderRadius: 10,
+    padding: '18px 16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+  },
+  voteTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#a0a0ff',
+  },
+  voteSub: {
+    fontSize: 13,
+    color: '#888',
+  },
+  // ── Group vote (timed-out / waiting)
+  voteWaitBox: {
+    background: '#1a0a0a',
+    border: '2px solid #884444',
+    borderRadius: 10,
+    padding: '18px 16px',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 8,
+    textAlign: 'center',
+  },
+  voteWaitIcon: { fontSize: 36 },
+  voteWaitTitle: { fontSize: 18, fontWeight: 'bold', color: '#e07070' },
+  voteWaitSub: { fontSize: 13, color: '#888' },
+  voteCountdown: { fontSize: 22, fontWeight: 'bold', color: '#f0c040', marginTop: 4 },
+  voteTally: {
+    display: 'flex',
+    gap: 16,
+    marginTop: 6,
+    justifyContent: 'center',
+  },
+  voteTallyRow: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 2,
+  },
+  voteTallyLabel: { fontSize: 12, color: '#888', textTransform: 'uppercase' },
+  voteTallyCount: { fontSize: 24, fontWeight: 'bold', color: '#fff' },
 };
 
 export default PlayerView;

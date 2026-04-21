@@ -28,18 +28,25 @@ function easeOut(t) {
  *   spinning        — boolean; set true to trigger a spin animation
  *   onSpinComplete  — callback fired when animation ends
  *   size            — canvas size in px (default 500)
+ *   highlightIndex  — when set (not null), dims all segments except this index
+ *   dimAmount       — 0–1, how much to dim non-highlighted segments (default 0.25)
  */
-export default function SpinningWheel({ segments, targetIndex, spinning, onSpinComplete, size = 500 }) {
+export default function SpinningWheel({ segments, targetIndex, spinning, onSpinComplete, size = 500, highlightIndex = null, dimAmount = 0.25, segmentColors = null }) {
   const canvasRef = useRef(null);
   const animFrameRef = useRef(null);
   const startTimeRef = useRef(null);
   const startAngleRef = useRef(0);
   const targetAngleRef = useRef(0);
+  // Keep a stable ref to onSpinComplete so the animate loop always calls the latest
+  // version without needing it in useEffect deps (prevents restarting animation on
+  // every render when the callback is an inline function).
+  const onSpinCompleteRef = useRef(onSpinComplete);
+  useEffect(() => { onSpinCompleteRef.current = onSpinComplete; }, [onSpinComplete]);
 
   const center = size / 2;
   const radius = center - 10;
 
-  const colors = getSegmentColors(segments.length);
+  const colors = segmentColors ?? getSegmentColors(segments.length);
 
   const drawWheel = useCallback((currentAngle) => {
     const canvas = canvasRef.current;
@@ -55,6 +62,7 @@ export default function SpinningWheel({ segments, targetIndex, spinning, onSpinC
     segments.forEach((seg, i) => {
       const start = currentAngle + i * sliceAngle;
       const end = start + sliceAngle;
+      const isDimmed = highlightIndex !== null && i !== highlightIndex;
 
       // Slice
       ctx.beginPath();
@@ -62,7 +70,9 @@ export default function SpinningWheel({ segments, targetIndex, spinning, onSpinC
       ctx.arc(center, center, radius, start, end);
       ctx.closePath();
       ctx.fillStyle = colors[i];
+      ctx.globalAlpha = isDimmed ? dimAmount : 1;
       ctx.fill();
+      ctx.globalAlpha = 1;
       ctx.strokeStyle = '#111';
       ctx.lineWidth = 2;
       ctx.stroke();
@@ -76,6 +86,7 @@ export default function SpinningWheel({ segments, targetIndex, spinning, onSpinC
       ctx.save();
       ctx.translate(x, y);
       ctx.rotate(labelAngle + Math.PI / 2);
+      ctx.globalAlpha = isDimmed ? dimAmount : 1;
       ctx.fillStyle = '#fff';
       ctx.font = `bold ${Math.max(10, Math.min(18, Math.floor(radius / n * 1.2)))}px sans-serif`;
       ctx.textAlign = 'center';
@@ -85,6 +96,7 @@ export default function SpinningWheel({ segments, targetIndex, spinning, onSpinC
       const maxChars = n <= 4 ? 14 : n <= 8 ? 10 : 7;
       const label = seg.label.length > maxChars ? seg.label.slice(0, maxChars - 1) + '…' : seg.label;
       ctx.fillText(label, 0, 0);
+      ctx.globalAlpha = 1;
       ctx.restore();
     });
 
@@ -129,6 +141,7 @@ export default function SpinningWheel({ segments, targetIndex, spinning, onSpinC
     if (!spinning) return;
 
     const finalAngle = computeTargetAngle();
+    console.log('[WHEEL] Animation starting. spinning=true, targetIndex=', targetIndex, 'finalAngle=', finalAngle, 'segments=', segments.length);
     startAngleRef.current = startAngleRef.current % (2 * Math.PI); // keep current angle
     // Ensure we always spin forward (add enough rotations)
     let delta = finalAngle - startAngleRef.current;
@@ -151,7 +164,7 @@ export default function SpinningWheel({ segments, targetIndex, spinning, onSpinC
       } else {
         startAngleRef.current = targetAngleRef.current;
         drawWheel(targetAngleRef.current);
-        if (onSpinComplete) onSpinComplete();
+        if (onSpinCompleteRef.current) onSpinCompleteRef.current();
       }
     };
 
@@ -159,14 +172,14 @@ export default function SpinningWheel({ segments, targetIndex, spinning, onSpinC
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [spinning, computeTargetAngle, drawWheel, onSpinComplete]);
+  }, [spinning, computeTargetAngle, drawWheel]);
 
-  // Draw idle state
+  // Draw idle state (also re-draws when highlightIndex changes)
   useEffect(() => {
     if (!spinning) {
       drawWheel(startAngleRef.current);
     }
-  }, [spinning, drawWheel, segments]);
+  }, [spinning, drawWheel, segments, highlightIndex, dimAmount]);
 
   return (
     <canvas
