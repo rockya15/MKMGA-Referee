@@ -69,39 +69,53 @@ function HostView({ gameState, socket }) {
   }, [socket]);
 
   useEffect(() => {
-    const onCascadeSpin = ({ targetPosition, mode, level, dnfSlots, roll, initiatorName, forcedDnf }) => {
-      console.log('[CASCADE] cascade-spin received:', { targetPosition, mode, level, dnfSlots, roll, initiatorName });
-      // Build 13-segment wheel: first dnfSlots entries are DNF, rest are numbered positions.
-      // The segment at index (roll - 1) must equal targetPosition.
-      const segs = new Array(13).fill(null);
-      for (let i = 0; i < dnfSlots; i++) segs[i] = 'DNF';
-      segs[roll - 1] = targetPosition;
-      const used = new Set(targetPosition !== 'DNF' ? [targetPosition] : []);
-      let fillNum = 1;
-      for (let i = dnfSlots; i < 13; i++) {
-        if (segs[i] !== null) continue;
-        while (used.has(String(fillNum))) fillNum++;
-        segs[i] = String(fillNum);
-        used.add(String(fillNum++));
+    const onCascadeSpin = ({ targetPosition, mode, level, dnfSlots, roll, segments, initiatorName, forcedDnf, token }) => {
+      if (currentStage !== 'POSITION_ASSIGNMENT') {
+        return;
       }
+      console.log('[CASCADE] cascade-spin received:', { targetPosition, mode, level, dnfSlots, roll, initiatorName, segments });
+      const segs = Array.isArray(segments) && segments.length === 13 ? segments : (() => {
+        const fallback = new Array(13).fill(null);
+        fallback[roll - 1] = targetPosition;
+        const used = new Set(targetPosition !== 'DNF' ? [targetPosition] : []);
+        let fillNum = 1;
+        for (let i = 0; i < 13; i++) {
+          if (fallback[i] !== null) continue;
+          while (used.has(String(fillNum))) fillNum++;
+          fallback[i] = String(fillNum);
+          used.add(String(fillNum++));
+        }
+        return fallback;
+      })();
       // Colors: all DNF slots red, numbered slots use palette
       const palette = ['#3498db','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#e91e63','#00bcd4','#8bc34a','#ff5722','#607d8b','#795548'];
       const segColors = segs.map((s) => s === 'DNF' ? '#e74c3c' : palette.shift() ?? '#888');
       const spinData = {
         targetPosition, mode, level, dnfSlots, initiatorName, forcedDnf,
+        token,
         segments: segs.map((label, i) => ({ id: i, label })),
         segmentColors: segColors,
         targetIndex: roll - 1,
       };
       console.log('[CASCADE] Setting cascadeSpinData, targetIndex:', spinData.targetIndex, 'segments:', segs);
       cascadeSpinDataRef.current = spinData;
+      setWheelSpawnKey((k) => k + 1);
       setCascadeSpinData(spinData);
       setCascadeSpinning(true);
       setCascadeSpinResult(null);
     };
     socket.on('cascade-spin', onCascadeSpin);
     return () => socket.off('cascade-spin', onCascadeSpin);
-  }, [socket]);
+  }, [socket, currentStage]);
+
+  useEffect(() => {
+    if (currentStage !== 'POSITION_ASSIGNMENT') {
+      setCascadeSpinData(null);
+      setCascadeSpinning(false);
+      setCascadeSpinResult(null);
+      cascadeSpinDataRef.current = null;
+    }
+  }, [currentStage]);
 
   useEffect(() => {
     const onVoteStart = (data) => {
@@ -140,6 +154,7 @@ function HostView({ gameState, socket }) {
   const [wheelOpacity, setWheelOpacity] = useState(1);
   const [avatarScale, setAvatarScale] = useState(0.3);
   const [avatarOpacity, setAvatarOpacity] = useState(0);
+  const [wheelSpawnKey, setWheelSpawnKey] = useState(0);
 
   // Track the previous currentPlayerIndex so we know when it changes
   const prevPickerIndexRef = useRef(null);
@@ -198,7 +213,7 @@ function HostView({ gameState, socket }) {
       .filter((id) => (draft.remainingByPlayer?.[id] ?? 0) > 0)
       .map((id) => {
         const p = allPlayers.find((pl) => pl.id === id);
-        return { id, label: p?.displayName ?? id };
+        return { id, label: p?.displayName ?? id, imageUrl: p?.profileImageUrl ?? null };
       });
     const currentPickerId = order[draft.currentPlayerIndex] ?? null;
     const currentPlayer = allPlayers.find((p) => p.id === currentPickerId) ?? null;
@@ -226,6 +241,11 @@ function HostView({ gameState, socket }) {
       if (newSegments.length <= 1) {
         skipAndReveal();
       } else {
+        setCascadeSpinData(null);
+        setCascadeSpinning(false);
+        setCascadeSpinResult(null);
+        cascadeSpinDataRef.current = null;
+        setWheelSpawnKey((k) => k + 1);
         setSpinning(true);
       }
       return;
@@ -241,6 +261,11 @@ function HostView({ gameState, socket }) {
       if (newSegments.length <= 1) {
         skipAndReveal();
       } else {
+        setCascadeSpinData(null);
+        setCascadeSpinning(false);
+        setCascadeSpinResult(null);
+        cascadeSpinDataRef.current = null;
+        setWheelSpawnKey((k) => k + 1);
         setSpinning(true);
       }
     }
@@ -272,6 +297,16 @@ function HostView({ gameState, socket }) {
   const sortedPlayers = [...players].sort((a, b) => b.balance - a.balance);
 
   const entryFeeDisplay = entryFee === 'ALL_IN' ? 'ALL IN' : `$${Number(entryFee).toFixed(2)}`;
+  const cascadeActive = !!cascadeSpinData;
+  const cascadeFocusPlayerId = positionDraft?.cascadeChain?.pendingDisplacedId ?? null;
+  const wheelActionPlayerId = activeTimer?.mode === 'position' ? activeTimer.playerId : null;
+  const wheelFocusPlayerId = cascadeFocusPlayerId ?? wheelActionPlayerId;
+  const spinContextLine1 = cascadeActive
+    ? `${cascadeSpinData.initiatorName} is cascading! They might swap with YOU.`
+    : (spinning ? 'Spinning for who gets to choose next...' : null);
+  const spinContextLine2 = cascadeActive
+    ? `${cascadeSpinData.mode === 'gentle' ? `Gentle Level ${cascadeSpinData.level + 1}` : `Harsh Spin ${cascadeSpinData.level + 1}`} · ${cascadeSpinData.dnfSlots}/13 DNF slots (${Math.round((cascadeSpinData.dnfSlots / 13) * 100)}% DNF chance)`
+    : null;
 
   return (
     <div style={styles.root}>
@@ -418,68 +453,109 @@ function HostView({ gameState, socket }) {
           <div style={styles.wheelPanel}>
             <div style={styles.wheelTitle}>THE WHEEL</div>
 
-            {segments.length > 0 ? (
+            {(cascadeActive || segments.length > 0) ? (
               <>
                 {/* Wheel + avatar overlay share the same space */}
                 <div style={{ position: 'relative', width: 420, height: 420, flexShrink: 0 }}>
-                  {/* Wheel fades out via CSS transition */}
-                  <div style={{
-                    opacity: wheelOpacity,
-                    transition: 'opacity 400ms ease',
-                    position: 'absolute', inset: 0,
-                  }}>
-                    <SpinningWheel
-                      segments={segments}
-                      targetIndex={targetIndex}
-                      spinning={spinning}
-                      onSpinComplete={handleSpinComplete}
-                      size={420}
-                      highlightIndex={highlightIndex}
-                      dimAmount={0.2}
-                    />
-                  </div>
-                  {/* Avatar — rendered as soon as pickerPlayer is set so CSS transitions fire correctly */}
-                  {pickerPlayer && (
-                    <div style={{
-                      position: 'absolute', inset: 0,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      opacity: avatarOpacity,
-                      transform: `scale(${avatarScale})`,
-                      transition: 'opacity 500ms ease, transform 500ms cubic-bezier(0.34, 1.56, 0.64, 1)',
-                      pointerEvents: 'none',
-                    }}>
-                      {pickerPlayer.profileImageUrl ? (
-                        <img
-                          src={pickerPlayer.profileImageUrl}
-                          alt={pickerPlayer.displayName}
-                          style={{
-                            width: 315, height: 315,
-                            borderRadius: '50%',
-                            objectFit: 'cover',
-                            border: '4px solid #f0c040',
-                            boxShadow: '0 0 40px rgba(240,192,64,0.8)',
-                          }}
-                        />
-                      ) : (
+                  {!cascadeActive ? (
+                    <>
+                      {/* Wheel fades out via CSS transition */}
+                      <div style={{
+                        opacity: wheelOpacity,
+                        transition: 'opacity 400ms ease',
+                        position: 'absolute', inset: 0,
+                      }}>
+                        <div className="wheel-spawn-in" key={`pos-spin-${wheelSpawnKey}`}>
+                          <SpinningWheel
+                            segments={segments}
+                            targetIndex={targetIndex}
+                            spinning={spinning}
+                            onSpinComplete={handleSpinComplete}
+                            size={420}
+                            highlightIndex={highlightIndex}
+                            dimAmount={0.2}
+                          />
+                        </div>
+                      </div>
+                      {/* Avatar — rendered as soon as pickerPlayer is set so CSS transitions fire correctly */}
+                      {pickerPlayer && (
                         <div style={{
-                          width: 315, height: 315,
-                          borderRadius: '50%',
-                          background: '#2a2a2a',
-                          border: '4px solid #f0c040',
-                          boxShadow: '0 0 40px rgba(240,192,64,0.8)',
+                          position: 'absolute', inset: 0,
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          fontSize: 120, fontWeight: 'bold', color: '#f0c040',
+                          opacity: avatarOpacity,
+                          transform: `scale(${avatarScale})`,
+                          transition: 'opacity 500ms ease, transform 500ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+                          pointerEvents: 'none',
                         }}>
-                          {pickerPlayer.displayName?.[0]?.toUpperCase() ?? '?'}
+                          {pickerPlayer.profileImageUrl ? (
+                            <img
+                              src={pickerPlayer.profileImageUrl}
+                              alt={pickerPlayer.displayName}
+                              style={{
+                                width: 315, height: 315,
+                                borderRadius: '50%',
+                                objectFit: 'cover',
+                                border: '4px solid #f0c040',
+                                boxShadow: '0 0 40px rgba(240,192,64,0.8)',
+                              }}
+                            />
+                          ) : (
+                            <div style={{
+                              width: 315, height: 315,
+                              borderRadius: '50%',
+                              background: '#2a2a2a',
+                              border: '4px solid #f0c040',
+                              boxShadow: '0 0 40px rgba(240,192,64,0.8)',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              fontSize: 120, fontWeight: 'bold', color: '#f0c040',
+                            }}>
+                              {pickerPlayer.displayName?.[0]?.toUpperCase() ?? '?'}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div style={styles.cascadeWheelStage} className="cascade-wheel-pop">
+                      {!cascadeSpinResult ? (
+                        <div className="wheel-spawn-in" key={`cascade-spin-${wheelSpawnKey}`}>
+                          <SpinningWheel
+                            segments={cascadeSpinData.segments}
+                            targetIndex={cascadeSpinData.targetIndex}
+                            spinning={cascadeSpinning}
+                            onSpinComplete={() => {
+                              const finalTarget = cascadeSpinDataRef.current?.targetPosition ?? cascadeSpinData.targetPosition;
+                              console.log('[CASCADE] onSpinComplete fired, result:', finalTarget);
+                              const spinToken = cascadeSpinDataRef.current?.token ?? cascadeSpinData.token;
+                              socket.emit('cascade-spin-complete', { token: spinToken });
+                              setCascadeSpinning(false);
+                              setCascadeSpinResult(finalTarget);
+                              setTimeout(() => {
+                                setCascadeSpinData(null);
+                                setCascadeSpinResult(null);
+                                cascadeSpinDataRef.current = null;
+                              }, 2800);
+                            }}
+                            size={420}
+                            segmentColors={cascadeSpinData.segmentColors}
+                          />
+                        </div>
+                      ) : (
+                        <div style={styles.cascadeResultBig}>
+                          {cascadeSpinResult === 'DNF' ? 'DNF' : `#${cascadeSpinResult}`}
                         </div>
                       )}
                     </div>
                   )}
                 </div>
-                {spinning && (
-                  <div style={styles.spinningLabel}>Spinning…</div>
+                {(spinContextLine1 || spinContextLine2) && (
+                  <div style={styles.wheelContextBox} className="cascade-title-fade">
+                    <div style={styles.wheelContextTitle}>THE WHEEL IS SPINNING</div>
+                    {spinContextLine1 && <div style={styles.wheelContextLine1}>{spinContextLine1}</div>}
+                    {spinContextLine2 && <div style={styles.wheelContextLine2}>{spinContextLine2}</div>}
+                  </div>
                 )}
-                {pickerName && !spinning && (
+                {pickerName && !spinning && !cascadeActive && (
                   <div style={{ ...styles.pickerLabel, opacity: avatarOpacity, transition: 'opacity 500ms ease' }}>
                     <span style={styles.pickerArrow}>▶</span> {pickerName} — pick your position!
                   </div>
@@ -519,6 +595,21 @@ function HostView({ gameState, socket }) {
               return (
                 <div style={styles.cascadeChainPanel}>
                   <div style={styles.cascadeChainTitle}>🎡 CASCADE CHAIN ACTIVE</div>
+                  {displacedPlayer && (
+                    <div style={styles.cascadeFocusCard}>
+                      {displacedPlayer.profileImageUrl ? (
+                        <img src={displacedPlayer.profileImageUrl} alt="" style={styles.cascadeFocusAvatar} />
+                      ) : (
+                        <div style={styles.cascadeFocusAvatarFallback}>
+                          {displacedPlayer.displayName?.[0]?.toUpperCase() ?? '?'}
+                        </div>
+                      )}
+                      <div style={styles.cascadeFocusMeta}>
+                        <div style={styles.cascadeFocusName}>{displacedPlayer.displayName}</div>
+                        <div style={styles.cascadeFocusPrompt}>Choose: Cascade or Accept DNF</div>
+                      </div>
+                    </div>
+                  )}
                   <div style={styles.cascadeChainDisplaced}>
                     <span style={{ color: '#e74c3c', fontWeight: 'bold' }}>
                       {displacedPlayer?.displayName ?? 'Unknown'}
@@ -540,14 +631,21 @@ function HostView({ gameState, socket }) {
           {sortedPlayers.map((p, i) => {
             const isOnClock = activeTimer?.playerId === p.id;
             const timerUrgent = isOnClock && activeTimer.timeLeft <= 10;
+            const isWheelFocus = WHEEL_STAGES.includes(currentStage) && wheelFocusPlayerId === p.id;
             return (
             <div key={p.id} style={{
               ...styles.lbRow,
               opacity: p.balance <= 0 ? 0.4 : 1,
               background: isOnClock
                 ? (timerUrgent ? '#2a0000' : '#001a0a')
+                : isWheelFocus
+                ? '#2a2410'
                 : p.balance <= 0 ? '#1a0000' : i % 2 === 0 ? '#151515' : '#1c1c1c',
-              border: isOnClock ? `1px solid ${timerUrgent ? '#e74c3c' : '#2ecc71'}` : '1px solid transparent',
+              border: isOnClock
+                ? `1px solid ${timerUrgent ? '#e74c3c' : '#2ecc71'}`
+                : isWheelFocus
+                ? '1px solid #f0c040'
+                : '1px solid transparent',
             }}>
               <span style={styles.lbRank}>#{i + 1}</span>
               {p.profileImageUrl ? (
@@ -556,6 +654,9 @@ function HostView({ gameState, socket }) {
                 <div style={styles.lbAvatarPlaceholder}>{p.displayName?.[0]?.toUpperCase() ?? '?'}</div>
               )}
               <span style={styles.lbName}>{p.displayName}</span>
+              {isWheelFocus && !isOnClock && (
+                <span style={styles.lbFocusBadge}>FOCUS</span>
+              )}
               {isOnClock && (
                 <span style={{ ...styles.lbTimerBadge, color: timerUrgent ? '#e74c3c' : '#2ecc71', borderColor: timerUrgent ? '#e74c3c' : '#2ecc71' }}>
                   {activeTimer.timeLeft}s
@@ -572,55 +673,6 @@ function HostView({ gameState, socket }) {
         </div>
       </div>
 
-    {/* ── Cascade spin overlay ───────────────────────────────────────────── */}
-    {cascadeSpinData && (
-      <div style={styles.cascadeSpinOverlay}>
-        <div style={styles.cascadeSpinPanel}>
-          <div style={styles.cascadeSpinTitle}>🎡 CASCADE WHEEL</div>
-          <div style={styles.cascadeSpinInitiator}>{cascadeSpinData.initiatorName}</div>
-          <div style={styles.cascadeSpinInfo}>
-            {cascadeSpinData.mode === 'gentle'
-              ? `Gentle Level ${cascadeSpinData.level + 1}`
-              : `Harsh Spin ${cascadeSpinData.level + 1}`}
-            {' · '}
-            <span style={{ color: '#e74c3c' }}>{cascadeSpinData.dnfSlots}</span>/13 DNF slots
-            {' · '}
-            {Math.round((cascadeSpinData.dnfSlots / 13) * 100)}% DNF chance
-          </div>
-          {!cascadeSpinResult ? (
-            <SpinningWheel
-              segments={cascadeSpinData.segments}
-              targetIndex={cascadeSpinData.targetIndex}
-              spinning={cascadeSpinning}
-              onSpinComplete={() => {
-                const finalTarget = cascadeSpinDataRef.current?.targetPosition ?? cascadeSpinData.targetPosition;
-                console.log('[CASCADE] onSpinComplete fired, result:', finalTarget);
-                setCascadeSpinning(false);
-                setCascadeSpinResult(finalTarget);
-                setTimeout(() => {
-                  setCascadeSpinData(null);
-                  setCascadeSpinResult(null);
-                  cascadeSpinDataRef.current = null;
-                }, 2800);
-              }}
-              size={360}
-              segmentColors={cascadeSpinData.segmentColors}
-            />
-          ) : (
-            <div style={{
-              fontSize: 72,
-              fontWeight: 'bold',
-              color: cascadeSpinResult === 'DNF' ? '#e74c3c' : '#2ecc71',
-              padding: '32px 48px',
-              textAlign: 'center',
-              textShadow: `0 0 30px ${cascadeSpinResult === 'DNF' ? 'rgba(231,76,60,0.8)' : 'rgba(46,204,113,0.8)'}`,
-            }}>
-              {cascadeSpinResult === 'DNF' ? '💀 DNF' : `🎯 #${cascadeSpinResult}`}
-            </div>
-          )}
-        </div>
-      </div>
-    )}
     </div>
   );
 }
@@ -676,6 +728,34 @@ const styles = {
     color: '#aaa',
     fontStyle: 'italic',
     animation: 'pulse 0.8s ease-in-out infinite alternate',
+  },
+  wheelContextBox: {
+    width: '100%',
+    maxWidth: 460,
+    background: 'linear-gradient(180deg, rgba(16,22,31,0.95) 0%, rgba(11,16,24,0.98) 100%)',
+    border: '1px solid #2c3b52',
+    borderRadius: 10,
+    padding: '12px 14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+    textAlign: 'center',
+    boxShadow: '0 0 24px rgba(35, 90, 150, 0.28)',
+  },
+  wheelContextTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#dbe9ff',
+    letterSpacing: 1.6,
+  },
+  wheelContextLine1: {
+    fontSize: 14,
+    color: '#a8cdf2',
+    fontWeight: 'bold',
+  },
+  wheelContextLine2: {
+    fontSize: 12,
+    color: '#90a5c2',
   },
   pickerLabel: {
     fontSize: 22,
@@ -747,6 +827,16 @@ const styles = {
     padding: '2px 6px',
     borderRadius: 4,
     marginLeft: 4,
+  },
+  lbFocusBadge: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#f0c040',
+    border: '1px solid #f0c040',
+    borderRadius: 4,
+    padding: '1px 6px',
+    marginRight: 4,
+    letterSpacing: 0.6,
   },
   lbTimerBadge: {
     fontSize: 13,
@@ -866,6 +956,51 @@ const styles = {
     textTransform: 'uppercase',
     letterSpacing: 1,
   },
+  cascadeFocusCard: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    padding: '10px 12px',
+    borderRadius: 8,
+    border: '1px solid #a03030',
+    background: '#220b0b',
+  },
+  cascadeFocusAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: '50%',
+    objectFit: 'cover',
+    border: '2px solid #e74c3c',
+    flexShrink: 0,
+  },
+  cascadeFocusAvatarFallback: {
+    width: 44,
+    height: 44,
+    borderRadius: '50%',
+    background: '#3a1a1a',
+    border: '2px solid #e74c3c',
+    color: '#ffb0b0',
+    fontWeight: 'bold',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  cascadeFocusMeta: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+  },
+  cascadeFocusName: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#ff9f9f',
+  },
+  cascadeFocusPrompt: {
+    fontSize: 12,
+    color: '#ffc6c6',
+  },
   cascadeChainDisplaced: {
     fontSize: 15,
     color: '#ccc',
@@ -879,44 +1014,40 @@ const styles = {
     color: '#666',
     fontStyle: 'italic',
   },
-  // ── Cascade spin overlay
-  cascadeSpinOverlay: {
+  cascadeWheelStage: {
     position: 'absolute',
     inset: 0,
-    background: 'rgba(0,0,0,0.82)',
+    background: 'rgba(6, 10, 16, 0.88)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 200,
+    borderRadius: 10,
+    border: '1px solid #2a3a50',
+    boxShadow: 'inset 0 0 45px rgba(30, 70, 120, 0.35)',
+    zIndex: 20,
   },
-  cascadeSpinPanel: {
-    background: '#111',
-    border: '2px solid #f0c040',
-    borderRadius: 16,
-    padding: '28px 36px',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: 12,
-    boxShadow: '0 0 60px rgba(240,192,64,0.35)',
-    minWidth: 420,
-  },
-  cascadeSpinTitle: {
-    fontSize: 26,
+  cascadeResultBig: {
+    fontSize: 86,
     fontWeight: 'bold',
-    color: '#f0c040',
-    letterSpacing: 3,
-    textTransform: 'uppercase',
+    color: '#f8fbff',
+    letterSpacing: 2,
+    textAlign: 'center',
+    textShadow: '0 0 22px rgba(70, 170, 255, 0.85)',
   },
-  cascadeSpinInitiator: {
-    fontSize: 20,
+  cascadeHeadline: {
+    marginTop: 2,
+    fontSize: 21,
     fontWeight: 'bold',
-    color: '#fff',
+    color: '#a9d8ff',
+    textAlign: 'center',
+    lineHeight: 1.25,
+    textShadow: '0 0 16px rgba(60, 140, 220, 0.55)',
   },
-  cascadeSpinInfo: {
+  cascadeSpinInfoInline: {
     fontSize: 14,
-    color: '#aaa',
+    color: '#98a6bb',
     letterSpacing: 0.5,
+    textAlign: 'center',
   },
 };
 

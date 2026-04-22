@@ -313,6 +313,9 @@ class GameState {
     player.contributedThisRace = this.roundToQuarter(player.contributedThisRace + entryAmount);
     player.paidEntry = true;
     player.allIn = player.balance === 0;
+    
+    // Add entry fee to the pot
+    this.pot = this.roundToQuarter(this.pot + entryAmount);
 
     return { success: true, allInEntry: isAllInEntry };
   }
@@ -403,21 +406,53 @@ class GameState {
     }
   }
 
-  rollCascadeResult(mode, level) {
+  shuffleArray(items) {
+    const copy = [...items];
+    for (let i = copy.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy;
+  }
+
+  rollCascadeResult(mode, level, excludePositions = []) {
     const table = mode === 'gentle' ? GENTLE_DNF_SLOTS : HARSH_DNF_SLOTS;
     const safeLevel = Math.max(0, Math.min(level, table.length - 1));
     const dnfSlots = table[safeLevel];
-    // Roll 1–13: slots 1..dnfSlots = DNF, slots dnfSlots+1..13 = numbered positions
-    const roll = Math.floor(Math.random() * 13) + 1;
+    const numberedSlots = 13 - dnfSlots;
+    const excluded = new Set(excludePositions.filter((slot) => slot !== 'DNF').map(String));
+    let candidatePositions = POSITIONS.filter((slot) => slot !== 'DNF' && !excluded.has(slot));
 
-    if (roll <= dnfSlots) {
-      return { finalPosition: 'DNF', roll, dnfSlots, mode, level: safeLevel };
+    // Safety fallback: if exclusions remove all numbered slots, use the full numbered pool.
+    if (candidatePositions.length === 0) {
+      candidatePositions = POSITIONS.filter((slot) => slot !== 'DNF');
     }
 
-    // Map roll slot (dnfSlots+1 .. 13) → position number (1 .. 13-dnfSlots)
-    const positionIndex = roll - dnfSlots; // 1-based index among non-DNF slots
-    const landedPosition = String(positionIndex);
-    return { finalPosition: landedPosition, roll, dnfSlots, mode, level: safeLevel };
+    const availablePositions = [];
+    while (availablePositions.length < numberedSlots) {
+      // Re-shuffle each pass so repeated slots (when pool < needed) still feel random.
+      const shuffled = this.shuffleArray(candidatePositions);
+      for (const pos of shuffled) {
+        availablePositions.push(pos);
+        if (availablePositions.length >= numberedSlots) break;
+      }
+    }
+
+    const segments = this.shuffleArray([
+      ...Array.from({ length: dnfSlots }, () => 'DNF'),
+      ...availablePositions,
+    ]);
+    const roll = Math.floor(Math.random() * segments.length) + 1;
+    const finalPosition = segments[roll - 1];
+
+    return {
+      finalPosition,
+      roll,
+      dnfSlots,
+      mode,
+      level: safeLevel,
+      segments,
+    };
   }
 
   applyCascadeOutcome(player, outcome) {
@@ -466,7 +501,9 @@ class GameState {
       // Accept DNF — chain ends
       this.positionDraft.cascadeChain = null;
       this.positionDraft.cascadeChainSpent = true;
-      const complete = this.wheelOrder.every((id) => this.positionDraft.remainingByPlayer[id] === 0);
+      const complete =
+        !this.positionDraft.cascadeChain &&
+        this.wheelOrder.every((id) => this.positionDraft.remainingByPlayer[id] === 0);
       return { success: true, cascaded: false, complete };
     }
 
@@ -475,7 +512,7 @@ class GameState {
     const player = this.getPlayerById(playerId);
     if (!player) return { error: 'Player not found.' };
 
-    const outcome = this.rollCascadeResult(nextMode, nextLevel);
+    const outcome = this.rollCascadeResult(nextMode, nextLevel, player.positions);
     const cascadeResult = this.applyCascadeOutcome(player, outcome);
     cascadeResult.mode = nextMode;
     cascadeResult.level = nextLevel;
@@ -498,6 +535,7 @@ class GameState {
             originalCascaderId,
             originalCascaderNextHarshLevel: harshLevel + 1,
             pendingDisplacedId: newDisplacedId,
+            promptReady: false,
             nextMode: 'harsh',
             nextLevel: harshLevel,
           };
@@ -514,6 +552,7 @@ class GameState {
             originalCascaderId,
             originalCascaderNextHarshLevel,
             pendingDisplacedId: newDisplacedId,
+            promptReady: false,
             nextMode: 'gentle',
             nextLevel: newNextLevel,
           };
@@ -521,7 +560,9 @@ class GameState {
       }
     }
 
-    const complete = this.wheelOrder.every((id) => this.positionDraft.remainingByPlayer[id] === 0);
+    const complete =
+      !this.positionDraft.cascadeChain &&
+      this.wheelOrder.every((id) => this.positionDraft.remainingByPlayer[id] === 0);
     return { success: true, cascaded: true, outcome: cascadeResult, complete };
   }
 
@@ -530,6 +571,19 @@ class GameState {
       this.positionDraft.cascadeChain = null;
       this.positionDraft.cascadeChainSpent = true;
     }
+  }
+
+  markCascadePromptReady() {
+    if (!this.positionDraft?.cascadeChain) {
+      return false;
+    }
+
+    if (this.positionDraft.cascadeChain.promptReady) {
+      return false;
+    }
+
+    this.positionDraft.cascadeChain.promptReady = true;
+    return true;
   }
 
   assignPositionWithOptions(playerId, position, options = {}) {
@@ -578,7 +632,7 @@ class GameState {
       !this.positionDraft.cascadeChain
     ) {
       const mode = forcedDnf ? 'gentle' : 'harsh';
-      const outcome = this.rollCascadeResult(mode, 0);
+      const outcome = this.rollCascadeResult(mode, 0, player.positions);
       cascade = this.applyCascadeOutcome(player, outcome);
       cascade.forcedDnf = forcedDnf;
       cascade.mode = mode;
@@ -592,6 +646,7 @@ class GameState {
           originalCascaderId: playerId,
           originalCascaderNextHarshLevel: mode === 'harsh' ? 1 : null,
           pendingDisplacedId: cascade.displacedPlayerId,
+          promptReady: false,
           nextMode: 'gentle',
           nextLevel: 1,
         };
@@ -604,7 +659,9 @@ class GameState {
       this.positionDraft.currentPlayerIndex += 1;
     }
 
-    const complete = this.wheelOrder.every((id) => this.positionDraft.remainingByPlayer[id] === 0);
+    const complete =
+      !this.positionDraft.cascadeChain &&
+      this.wheelOrder.every((id) => this.positionDraft.remainingByPlayer[id] === 0);
     if (complete) {
       this.positionDraft.currentPlayerIndex = this.wheelOrder.length;
     }

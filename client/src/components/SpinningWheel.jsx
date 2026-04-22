@@ -37,6 +37,8 @@ export default function SpinningWheel({ segments, targetIndex, spinning, onSpinC
   const startTimeRef = useRef(null);
   const startAngleRef = useRef(0);
   const targetAngleRef = useRef(0);
+  const currentAngleRef = useRef(0);
+  const segmentImageCacheRef = useRef(new Map());
   // Keep a stable ref to onSpinComplete so the animate loop always calls the latest
   // version without needing it in useEffect deps (prevents restarting animation on
   // every render when the callback is an inline function).
@@ -82,6 +84,7 @@ export default function SpinningWheel({ segments, targetIndex, spinning, onSpinC
       const labelRadius = radius * 0.65;
       const x = center + labelRadius * Math.cos(labelAngle);
       const y = center + labelRadius * Math.sin(labelAngle);
+      const hasImage = !!seg.imageUrl;
 
       ctx.save();
       ctx.translate(x, y);
@@ -92,13 +95,53 @@ export default function SpinningWheel({ segments, targetIndex, spinning, onSpinC
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
 
+      if (hasImage) {
+        const cache = segmentImageCacheRef.current;
+        const cached = cache.get(seg.imageUrl);
+        const imgSize = Math.max(16, Math.min(28, Math.floor(radius / n * 1.7)));
+        const imageY = -Math.max(10, Math.floor(imgSize * 0.5));
+
+        if (cached?.loaded && cached.image) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(0, imageY, imgSize / 2, 0, 2 * Math.PI);
+          ctx.closePath();
+          ctx.clip();
+          ctx.drawImage(cached.image, -imgSize / 2, imageY - imgSize / 2, imgSize, imgSize);
+          ctx.restore();
+
+          ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(0, imageY, imgSize / 2, 0, 2 * Math.PI);
+          ctx.closePath();
+          ctx.stroke();
+        } else if (!cached) {
+          const image = new Image();
+          cache.set(seg.imageUrl, { image, loaded: false, failed: false });
+          image.onload = () => {
+            const entry = cache.get(seg.imageUrl);
+            if (entry) entry.loaded = true;
+            const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (fn) => setTimeout(fn, 0);
+            raf(() => drawWheel(currentAngleRef.current));
+          };
+          image.onerror = () => {
+            const entry = cache.get(seg.imageUrl);
+            if (entry) entry.failed = true;
+          };
+          image.src = seg.imageUrl;
+        }
+      }
+
       // Truncate long names
       const maxChars = n <= 4 ? 14 : n <= 8 ? 10 : 7;
       const label = seg.label.length > maxChars ? seg.label.slice(0, maxChars - 1) + '…' : seg.label;
-      ctx.fillText(label, 0, 0);
+      ctx.fillText(label, 0, hasImage ? 14 : 0);
       ctx.globalAlpha = 1;
       ctx.restore();
     });
+
+    currentAngleRef.current = currentAngle;
 
     // Center circle
     ctx.beginPath();
@@ -131,9 +174,14 @@ export default function SpinningWheel({ segments, targetIndex, spinning, onSpinC
     // Slice i starts at: baseAngle + i * sliceAngle, center at: baseAngle + i*sliceAngle + sliceAngle/2
     // We want: baseAngle + targetIndex*sliceAngle + sliceAngle/2 = -PI/2 (mod 2PI)
     // => baseAngle = -PI/2 - targetIndex*sliceAngle - sliceAngle/2
-    const target = -Math.PI / 2 - targetIndex * sliceAngle - sliceAngle / 2;
-    // Add full rotations
-    return target - FULL_ROTATIONS * 2 * Math.PI;
+    const targetCenter = -Math.PI / 2 - targetIndex * sliceAngle - sliceAngle / 2;
+    
+    // Add random jitter within ±1/3 of the segment width for suspense
+    // This makes it land randomly within the target segment
+    const jitter = (Math.random() - 0.5) * (sliceAngle / 1.5);
+    const target = targetCenter + jitter - FULL_ROTATIONS * 2 * Math.PI;
+    
+    return target;
   }, [segments.length, targetIndex]);
 
   // Animate

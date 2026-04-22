@@ -22,6 +22,13 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
+// Global cascade-spin synchronization state (shared across all sockets)
+let pendingPositionAssignmentFinalize = false;
+let expectedCascadeSpinToken = null;
+let cascadeSpinTokenCounter = 0;
+let cascadeCompletionTimeout = null;
+let expectedCascadeSpinDeadlineAt = 0;
+
 // Initialize game components
 const gameState = new GameState();
 const persistedSnapshot = stateStore.loadState();
@@ -105,9 +112,78 @@ function maybeStartPositionTimer() {
   if (gameState.currentStage !== STAGES.POSITION_ASSIGNMENT) return;
   const draft = gameState.positionDraft;
   if (!draft) return;
+  if (draft.cascadeChain) {
+    timerManager.clearTimer();
+    return;
+  }
   const currentPickerId = gameState.wheelOrder?.[draft.currentPlayerIndex];
   if (currentPickerId) {
     timerManager.startTimer(currentPickerId, 30, 'position');
+  }
+}
+
+function clearCascadeCompletionTimeout() {
+  if (cascadeCompletionTimeout) {
+    clearTimeout(cascadeCompletionTimeout);
+    cascadeCompletionTimeout = null;
+  }
+  expectedCascadeSpinDeadlineAt = 0;
+}
+
+function handleCascadeSpinConcluded(reason) {
+  if (gameState.currentStage !== STAGES.POSITION_ASSIGNMENT) {
+    pendingPositionAssignmentFinalize = false;
+    expectedCascadeSpinToken = null;
+    clearCascadeCompletionTimeout();
+    return;
+  }
+
+  expectedCascadeSpinToken = null;
+  clearCascadeCompletionTimeout();
+
+  if (pendingPositionAssignmentFinalize) {
+    finalizePositionAssignmentPhase();
+    return;
+  }
+
+  if (gameState.markCascadePromptReady()) {
+    console.warn(`[CASCADE] Spin conclusion applied via ${reason}; prompt is now ready.`);
+    emitGameState();
+  }
+}
+
+function scheduleCascadeCompletionFallback(token) {
+  clearCascadeCompletionTimeout();
+  expectedCascadeSpinDeadlineAt = Date.now() + 9000;
+  cascadeCompletionTimeout = setTimeout(() => {
+    if (expectedCascadeSpinToken !== token) {
+      return;
+    }
+    console.warn(`[CASCADE] Fallback completion fired for token=${token}.`);
+    handleCascadeSpinConcluded('fallback-timeout');
+  }, 9000);
+}
+
+function emitCascadeSpin(payload) {
+  const token = `${Date.now()}-${++cascadeSpinTokenCounter}-${Math.random().toString(36).slice(2, 8)}`;
+  expectedCascadeSpinToken = token;
+  scheduleCascadeCompletionFallback(token);
+  io.emit('cascade-spin', { ...payload, token });
+  return token;
+}
+
+function finalizePositionAssignmentPhase() {
+  pendingPositionAssignmentFinalize = false;
+  expectedCascadeSpinToken = null;
+  clearCascadeCompletionTimeout();
+  timerManager.clearTimer();
+  const phaseResult = gameState.completePositionAssignment();
+  if (!phaseResult.skippedBetting) {
+    bettingEngine.initializeBetting();
+    emitGameState();
+    maybeStartNextBettingTimer();
+  } else {
+    emitGameState();
   }
 }
 
@@ -216,26 +292,26 @@ io.on('connection', (socket) => {
       const cascade = result.cascade;
       const initiator = gameState.getPlayerById(socket.id);
       console.log('[CASCADE] Emitting cascade-spin:', { targetPosition: cascade.finalPosition, mode: cascade.mode, level: cascade.level, dnfSlots: cascade.dnfSlots, roll: cascade.roll });
-      io.emit('cascade-spin', {
+      emitCascadeSpin({
         targetPosition: cascade.finalPosition,
         mode: cascade.mode,
         level: cascade.level,
         dnfSlots: cascade.dnfSlots,
         roll: cascade.roll,
+        segments: cascade.segments,
         initiatorName: initiator?.displayName ?? 'Unknown',
         forcedDnf: cascade.forcedDnf ?? false,
       });
     }
 
     if (result.complete) {
-      timerManager.clearTimer();
-      const phaseResult = gameState.completePositionAssignment();
-      if (!phaseResult.skippedBetting) {
-        bettingEngine.initializeBetting();
+      if (result.cascade) {
+        // Wait until host wheel animation completes before advancing stage.
+        pendingPositionAssignmentFinalize = true;
+        timerManager.clearTimer();
         emitGameState();
-        maybeStartNextBettingTimer();
       } else {
-        emitGameState();
+        finalizePositionAssignmentPhase();
       }
     } else {
       // Check if the same player still has more picks remaining
@@ -286,6 +362,19 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('cascade-spin-complete', (data) => {
+    if (gameState.currentStage !== STAGES.POSITION_ASSIGNMENT) {
+      return;
+    }
+
+    const spinToken = String(data?.token || '');
+    if (!spinToken || spinToken !== expectedCascadeSpinToken) {
+      return;
+    }
+
+    handleCascadeSpinConcluded('client-event');
+  });
+
   // Displaced player's response to an active cascade chain
   socket.on('cascade-response', (data) => {
     const doCascade = Boolean(data?.cascade);
@@ -300,29 +389,32 @@ io.on('connection', (socket) => {
       const outcome = result.outcome;
       const responder = gameState.getPlayerById(socket.id);
       console.log('[CASCADE] Emitting cascade-spin (response):', { targetPosition: outcome.finalPosition, mode: outcome.mode, level: outcome.level, dnfSlots: outcome.dnfSlots, roll: outcome.roll });
-      io.emit('cascade-spin', {
+      emitCascadeSpin({
         targetPosition: outcome.finalPosition,
         mode: outcome.mode,
         level: outcome.level,
         dnfSlots: outcome.dnfSlots,
         roll: outcome.roll,
+        segments: outcome.segments,
         initiatorName: responder?.displayName ?? 'Unknown',
         forcedDnf: false,
       });
     }
 
     if (result.complete) {
-      timerManager.clearTimer();
-      const phaseResult = gameState.completePositionAssignment();
-      if (!phaseResult.skippedBetting) {
-        bettingEngine.initializeBetting();
+      if (result.cascaded) {
+        // A cascade spin was just emitted; complete phase only after wheel completion event.
+        pendingPositionAssignmentFinalize = true;
+        timerManager.clearTimer();
         emitGameState();
-        maybeStartNextBettingTimer();
       } else {
-        emitGameState();
+        finalizePositionAssignmentPhase();
       }
     } else {
       emitGameState();
+      if (!result.cascaded) {
+        maybeStartPositionTimer();
+      }
     }
   });
 
@@ -331,12 +423,21 @@ io.on('connection', (socket) => {
     let result = { success: true };
     switch (data.action) {
       case 'open-lobby':
+        pendingPositionAssignmentFinalize = false;
+        expectedCascadeSpinToken = null;
+        clearCascadeCompletionTimeout();
         result = gameState.openLobby(data.maxCashCap);
         break;
       case 'start-game':
+        pendingPositionAssignmentFinalize = false;
+        expectedCascadeSpinToken = null;
+        clearCascadeCompletionTimeout();
         result = gameState.startPreBet();
         break;
       case 'start-position-assignment':
+        pendingPositionAssignmentFinalize = false;
+        expectedCascadeSpinToken = null;
+        clearCascadeCompletionTimeout();
         if (!gameState.allPreBetChoicesSubmitted()) {
           result = { error: 'Waiting for all active players to choose PAY or SKIP.' };
           break;
@@ -352,12 +453,18 @@ io.on('connection', (socket) => {
         }
         break;
       case 'next-race':
+        pendingPositionAssignmentFinalize = false;
+        expectedCascadeSpinToken = null;
+        clearCascadeCompletionTimeout();
         result = gameState.nextRace();
         break;
       case 'record-race-result':
         result = gameState.settleRace(String(data.placement));
         break;
       case 'reset-game': {
+        pendingPositionAssignmentFinalize = false;
+        expectedCascadeSpinToken = null;
+        clearCascadeCompletionTimeout();
         timerManager.clearTimer();
         result = gameState.resetGame();
         // Clear persisted state
@@ -418,3 +525,21 @@ server.listen(PORT, () => {
     maybeStartPositionTimer();
   }
 });
+
+// Independent watchdog in case the timer callback is missed or delayed unexpectedly.
+setInterval(() => {
+  if (gameState.currentStage !== STAGES.POSITION_ASSIGNMENT) {
+    return;
+  }
+
+  if (!expectedCascadeSpinToken || !expectedCascadeSpinDeadlineAt) {
+    return;
+  }
+
+  if (Date.now() < expectedCascadeSpinDeadlineAt) {
+    return;
+  }
+
+  console.warn(`[CASCADE] Watchdog completion fired for token=${expectedCascadeSpinToken}.`);
+  handleCascadeSpinConcluded('watchdog-interval');
+}, 1000);

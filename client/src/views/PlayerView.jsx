@@ -8,7 +8,8 @@ function PlayerView({ gameState, socket }) {
   const [mode, setMode] = useState('menu'); // 'menu' | 'joining' | 'reconnecting'
   const [serverError, setServerError] = useState(null);
   const [pendingDnf, setPendingDnf] = useState(false);
-  const [raiseInput, setRaiseInput] = useState('');
+  const [showCascadeHelp, setShowCascadeHelp] = useState(false);
+  const [raiseTotal, setRaiseTotal] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
   const storedCreds = useRef(null);
 
@@ -24,6 +25,14 @@ function PlayerView({ gameState, socket }) {
   const [positionVoteTimeLeft, setPositionVoteTimeLeft] = useState(0);
   const [positionVoteCounts, setPositionVoteCounts] = useState({});
   const [myPositionVote, setMyPositionVote] = useState(null);
+  const [moneyPulse, setMoneyPulse] = useState({
+    balance: false,
+    pot: false,
+    contributed: false,
+    roundBet: false,
+    currentBet: false,
+  });
+  const [positionPulseKeys, setPositionPulseKeys] = useState({});
 
   // Auto-reconnect when socket gets a new ID after a drop
   useEffect(() => {
@@ -132,8 +141,11 @@ function PlayerView({ gameState, socket }) {
 
   const pickPosition = (position, cascade = false) => {
     setPendingDnf(false);
+    setShowCascadeHelp(false);
     socket.emit('position-select', { position, cascade });
   };
+
+  const roundToQuarter = (value) => Math.round(value * 4) / 4;
 
   // ── Derive available positions ───────────────────────────────────────────────
   const { positionDraft, wheelOrder } = gameState;
@@ -153,9 +165,23 @@ function PlayerView({ gameState, socket }) {
 
   const cascadeSpent = positionDraft?.cascadeChainSpent ?? false;
   const cascadeChain = positionDraft?.cascadeChain ?? null;
-  const iAmDisplacedInChain = !!(cascadeChain && cascadeChain.pendingDisplacedId === me?.id);
+  const iAmPendingDisplacedInChain = !!(cascadeChain && cascadeChain.pendingDisplacedId === me?.id);
+  const iAmDisplacedInChain = !!(iAmPendingDisplacedInChain && cascadeChain?.promptReady);
+  const hasRemainingPicks = (positionDraft?.remainingByPlayer?.[me?.id] ?? 0) > 0;
+  const isCascadeWheelSpinning = !!(cascadeChain && !cascadeChain?.promptReady);
+  const isPositionDraftWheelSpinning =
+    gameState.currentStage === 'POSITION_ASSIGNMENT' &&
+    !positionVote &&
+    !isCascadeWheelSpinning &&
+    !activeTimer;
+  const showWheelSpinTvPrompt =
+    gameState.currentStage === 'POSITION_ASSIGNMENT' &&
+    me?.paidEntry &&
+    !iAmDisplacedInChain &&
+    !positionVote &&
+    ((isCascadeWheelSpinning && iAmPendingDisplacedInChain) || (isPositionDraftWheelSpinning && hasRemainingPicks));
   // Cascade is available for DNF picks when: EXCLUSIVE mode, chain not spent, no chain pending
-  const cascadeAvailable =
+  const cascadeAvailable = // eslint-disable-line no-unused-vars
     positionDraft?.mode === 'EXCLUSIVE' && !cascadeSpent && !cascadeChain;
 
   // ── Betting helpers ──────────────────────────────────────────────────────────
@@ -165,8 +191,125 @@ function PlayerView({ gameState, socket }) {
     gameState.bettingState?.actionQueue?.[0] === me.id;
 
   const currentBet = gameState.bettingState?.currentBet ?? 0;
+  const minRaiseTo = roundToQuarter(currentBet + 0.25);
+  const maxRaiseTo = roundToQuarter(
+    Math.min(gameState.bettingState?.betCap ?? 0, (me?.balance ?? 0) + (me?.roundBet ?? 0))
+  );
+  const raiseDenominations = [
+    { value: 0.25, label: '0.25' },
+    { value: 0.5, label: '0.5' },
+    { value: 1, label: '1' },
+    { value: 2, label: '$2' },
+    { value: 5, label: '$5' },
+  ];
   const canCheck = currentBet === 0 || (me?.roundBet ?? 0) >= currentBet;
   const canRaise = !gameState.bettingState?.raiseLockedPlayers?.[me?.id];
+  const hasValidRaise =
+    Number.isFinite(raiseTotal) && raiseTotal > currentBet && raiseTotal <= maxRaiseTo;
+
+  useEffect(() => {
+    if (!isMyBetTurn || !canRaise || maxRaiseTo <= currentBet) {
+      setRaiseTotal(null);
+      return;
+    }
+    setRaiseTotal((prev) => {
+      if (Number.isFinite(prev) && prev > currentBet && prev <= maxRaiseTo) {
+        return prev;
+      }
+      return minRaiseTo;
+    });
+  }, [isMyBetTurn, canRaise, currentBet, minRaiseTo, maxRaiseTo]);
+
+  const addRaiseChip = (chipValue) => {
+    if (maxRaiseTo <= currentBet) return;
+    setRaiseTotal((prev) => {
+      const base = Number.isFinite(prev) ? prev : minRaiseTo;
+      return roundToQuarter(Math.min(maxRaiseTo, base + chipValue));
+    });
+  };
+
+  const stage = gameState.currentStage;
+  const myTimer = activeTimer?.playerId === me?.id ? activeTimer : null;
+  const timerUrgent = myTimer !== null && myTimer.timeLeft <= 10;
+  const playerPositions = me?.positions ?? [];
+  const previousMoneyRef = useRef(null);
+  const moneyPulseTimeoutsRef = useRef({});
+  const previousPositionsRef = useRef(playerPositions);
+
+  useEffect(() => {
+    if (!me) return;
+
+    const current = {
+      balance: Number(me.balance ?? 0),
+      pot: Number(gameState.pot ?? 0),
+      contributed: Number(me.contributedThisRace ?? 0),
+      roundBet: Number(me.roundBet ?? 0),
+      currentBet: Number(currentBet ?? 0),
+    };
+
+    if (!previousMoneyRef.current) {
+      previousMoneyRef.current = current;
+      return;
+    }
+
+    const previous = previousMoneyRef.current;
+    const increasedKeys = Object.keys(current).filter((key) => current[key] > previous[key]);
+
+    if (increasedKeys.length > 0) {
+      setMoneyPulse((prev) => {
+        const next = { ...prev };
+        increasedKeys.forEach((key) => { next[key] = true; });
+        return next;
+      });
+
+      increasedKeys.forEach((key) => {
+        if (moneyPulseTimeoutsRef.current[key]) {
+          clearTimeout(moneyPulseTimeoutsRef.current[key]);
+        }
+        moneyPulseTimeoutsRef.current[key] = setTimeout(() => {
+          setMoneyPulse((prev) => ({ ...prev, [key]: false }));
+          moneyPulseTimeoutsRef.current[key] = null;
+        }, 1000);
+      });
+    }
+
+    previousMoneyRef.current = current;
+  }, [me, gameState.pot, currentBet]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(moneyPulseTimeoutsRef.current).forEach((timeoutId) => {
+        if (timeoutId) clearTimeout(timeoutId);
+      });
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!me) return;
+
+    const prevPositions = previousPositionsRef.current ?? [];
+    const currentPositions = playerPositions;
+
+    if (stage === 'POSITION_ASSIGNMENT' && currentPositions.length > prevPositions.length) {
+      const newKeys = {};
+      for (let idx = prevPositions.length; idx < currentPositions.length; idx += 1) {
+        newKeys[`${currentPositions[idx]}-${idx}`] = true;
+      }
+      setPositionPulseKeys((prev) => ({ ...prev, ...newKeys }));
+
+      setTimeout(() => {
+        setPositionPulseKeys((prev) => {
+          const next = { ...prev };
+          Object.keys(newKeys).forEach((key) => {
+            delete next[key];
+          });
+          return next;
+        });
+      }, 1000);
+    }
+
+    previousPositionsRef.current = [...currentPositions];
+  }, [me, playerPositions, stage]);
 
   // ── Not joined yet ───────────────────────────────────────────────────────────
   if (!me) {
@@ -234,19 +377,69 @@ function PlayerView({ gameState, socket }) {
     );
   }
 
-  // ── Joined — render game phase ───────────────────────────────────────────────
-  const stage = gameState.currentStage;
-
-  // Timer badge: only show when the server says it's MY timer
-  const myTimer = activeTimer?.playerId === me.id ? activeTimer : null;
-  const timerUrgent = myTimer !== null && myTimer.timeLeft <= 10;
-
   return (
     <div style={styles.root}>
-      {/* Header */}
-      <div style={styles.playerHeader}>
-        <span style={styles.playerName}>{me.displayName}</span>
-        <span style={styles.playerBalance}>${Number(me.balance).toFixed(2)}</span>
+      {/* Player HUD */}
+      <div style={styles.playerHud}>
+        <div style={styles.playerHudTopRow}>
+          <div style={styles.playerHudName}>{me.displayName}</div>
+          <div style={styles.playerHudMoneyWrap}>
+            <div className={moneyPulse.balance ? 'money-increase-flash' : undefined} style={styles.playerHudBalance}>${Number(me.balance).toFixed(2)}</div>
+            {moneyPulse.balance && <span className="money-ticket-pop" style={styles.moneyTicketBadge}>🎟</span>}
+          </div>
+        </div>
+
+        <div style={styles.playerHudGrid}>
+          <div style={styles.playerHudStatCard}>
+            <div style={styles.playerHudStatLabel}>Pot</div>
+            <div style={styles.playerHudMoneyWrap}>
+              <div className={moneyPulse.pot ? 'money-increase-flash' : undefined} style={styles.playerHudStatValue}>${Number(gameState.pot).toFixed(2)}</div>
+              {moneyPulse.pot && <span className="money-ticket-pop" style={styles.moneyTicketBadge}>🎟</span>}
+            </div>
+          </div>
+          <div style={styles.playerHudStatCard}>
+            <div style={styles.playerHudStatLabel}>You Put In</div>
+            <div style={styles.playerHudMoneyWrap}>
+              <div className={moneyPulse.contributed ? 'money-increase-flash' : undefined} style={styles.playerHudStatValue}>${Number(me.contributedThisRace ?? 0).toFixed(2)}</div>
+              {moneyPulse.contributed && <span className="money-ticket-pop" style={styles.moneyTicketBadge}>🎟</span>}
+            </div>
+          </div>
+          <div style={styles.playerHudStatCard}>
+            <div style={styles.playerHudStatLabel}>Current Bet</div>
+            <div style={styles.playerHudMoneyWrap}>
+              <div className={moneyPulse.currentBet ? 'money-increase-flash' : undefined} style={styles.playerHudStatValue}>${Number(currentBet ?? 0).toFixed(2)}</div>
+              {moneyPulse.currentBet && <span className="money-ticket-pop" style={styles.moneyTicketBadge}>🎟</span>}
+            </div>
+          </div>
+          <div style={styles.playerHudStatCard}>
+            <div style={styles.playerHudStatLabel}>Skip/Fold Token</div>
+            <div style={{ ...styles.playerHudStatValue, ...(me.skipFoldTokenAvailable ? styles.tokenReady : styles.tokenUsed) }}>
+              {me.skipFoldTokenAvailable ? 'Ready' : 'Spent'}
+            </div>
+          </div>
+        </div>
+
+        <div style={styles.playerHudPositionsWrap}>
+          <div style={styles.playerHudPositionsLabel}>Your Positions</div>
+          {playerPositions.length > 0 ? (
+            <div style={styles.playerHudPositionsRow}>
+              {playerPositions.map((pos, index) => {
+                const posKey = `${pos}-${index}`;
+                return (
+                <span
+                  key={posKey}
+                  className={positionPulseKeys[posKey] ? 'position-pill-select' : undefined}
+                  style={styles.playerHudPositionPill}
+                >
+                  {pos}
+                </span>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={styles.playerHudNoPositions}>No positions yet</div>
+          )}
+        </div>
       </div>
 
       {/* Full-width countdown strip — visible whenever any timer is active */}
@@ -273,9 +466,6 @@ function PlayerView({ gameState, socket }) {
       {stage === 'LOBBY' && (
         <div style={styles.phaseBox}>
           <div style={styles.phaseTitle}>Waiting for game to start…</div>
-          {me.positions?.length > 0 && (
-            <div style={styles.phaseInfo}>Your positions: {me.positions.join(', ')}</div>
-          )}
         </div>
       )}
 
@@ -353,7 +543,7 @@ function PlayerView({ gameState, socket }) {
             );
           })()}
 
-          {/* Position vote overlay / normal pick UI — hidden while I'm the pending displaced player */}
+          {/* Position vote overlay / normal pick UI */}
           {!iAmDisplacedInChain && (positionVote ? (
             positionVote.timedOutPlayer === me.id ? (
               /* I’m the timed-out player */
@@ -419,8 +609,7 @@ function PlayerView({ gameState, socket }) {
                 </div>
               )
             ) : (
-              /* Not a voter (skipped race, etc.) */
-              <div style={styles.phaseInfo}>🗽 Position vote in progress… ({positionVoteTimeLeft}s)</div>
+              <div style={styles.tvSpinPrompt}>👀 Look at the TV!</div>
             )
           ) : (
             /* Normal pick UI */
@@ -458,7 +647,26 @@ function PlayerView({ gameState, socket }) {
               </div>
               {pendingDnf && (
                 <div style={styles.cascadeBox}>
-                  <div style={styles.phaseInfo}>You picked DNF. Attempt cascade?</div>
+                  <div style={{ ...styles.phaseInfo, display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
+                    <strong style={{ color: '#fff' }}>You picked DNF. Attempt cascade?</strong>
+                    <button
+                      type="button"
+                      style={styles.cascadeHelpBtn}
+                      onClick={() => setShowCascadeHelp((prev) => !prev)}
+                    >
+                      {showCascadeHelp ? 'Hide explanation' : 'How cascade works'}
+                    </button>
+                  </div>
+                  {showCascadeHelp && (
+                    <div style={styles.cascadeHelpText}>
+                      Cascade spins a wheel with DNF odds. If it lands on a numbered position, you take it.
+                      If that position is already occupied, that player is displaced to DNF and may choose to
+                      cascade next.
+                    </div>
+                  )}
+                  <div style={{ ...styles.phaseInfo, fontSize: 13, color: '#aeb8c8' }}>
+                    Cascade gives you a chance to escape DNF, but you might still land DNF.
+                  </div>
                   <div style={styles.actionRow}>
                     <button style={styles.actionBtn} onClick={() => pickPosition('DNF', true)}>
                       Yes, cascade
@@ -467,22 +675,16 @@ function PlayerView({ gameState, socket }) {
                       style={{ ...styles.actionBtn, background: '#333' }}
                       onClick={() => pickPosition('DNF', false)}
                     >
-                      No, stay DNF
+                      Keep DNF
                     </button>
                   </div>
                 </div>
               )}
             </>
-          ) : isMyPickTurn ? (
-            <div style={styles.phaseInfo}>🎡 Spinning… get ready to pick!</div>
           ) : (
-            <div style={styles.phaseInfo}>
-              {me.positions?.length > 0
-                ? `Your positions: ${me.positions.join(', ')} — waiting for others…`
-                : 'Waiting for your turn…'}
-            </div>
+            <div style={styles.tvSpinPrompt}>👀 Look at the TV!</div>
           )
-          ))} {/* end !iAmDisplacedInChain block */}
+          ))}
         </div>
       )}
 
@@ -490,13 +692,7 @@ function PlayerView({ gameState, socket }) {
       {stage === 'BETTING' && (
         <div style={styles.phaseBox}>
           <div style={styles.phaseTitle}>Betting Round</div>
-          <div style={styles.phaseInfo}>
-            Pot: <strong>${Number(gameState.pot).toFixed(2)}</strong> · Current bet:{' '}
-            <strong>${Number(currentBet).toFixed(2)}</strong>
-          </div>
-          {me.positions?.length > 0 && (
-            <div style={styles.phaseInfo}>Your positions: {me.positions.join(', ')}</div>
-          )}
+
 
           {/* ── Group vote is active ─────────────────────────────── */}
           {groupVote ? (
@@ -568,15 +764,14 @@ function PlayerView({ gameState, socket }) {
                 </div>
               )
             ) : (
-              /* I'm not involved in this vote (skipped / folded / all-in) */
-              <div style={styles.phaseInfo}>Vote in progress… ({voteTimeLeft}s)</div>
+              <div style={styles.tvSpinPrompt}>👀 Look at the TV!</div>
             )
           ) : (
             /* ── Normal betting UI ───────────────────────────────── */
             me.allIn ? (
-              <div style={styles.phaseInfo}>You are all-in — waiting for others…</div>
+              <div style={styles.tvSpinPrompt}>👀 Look at the TV!</div>
             ) : me.folded ? (
-              <div style={styles.phaseInfo}>You folded — waiting for others…</div>
+              <div style={styles.tvSpinPrompt}>👀 Look at the TV!</div>
             ) : !me.paidEntry ? (
               <div style={styles.phaseInfo}>You skipped this race.</div>
             ) : isMyBetTurn ? (
@@ -599,31 +794,57 @@ function PlayerView({ gameState, socket }) {
                   </button>
                 )}
                 {canRaise && (
-                  <div style={styles.raiseRow}>
-                    <input
-                      style={styles.raiseInput}
-                      type="number"
-                      step="0.25"
-                      min={currentBet + 0.25}
-                      max={me.balance + (me.roundBet ?? 0)}
-                      placeholder="Raise to…"
-                      value={raiseInput}
-                      onChange={(e) => setRaiseInput(e.target.value)}
-                    />
-                    <button
-                      style={styles.actionBtn}
-                      onClick={() => {
-                        socket.emit('betting-action', { action: 'raise', amount: parseFloat(raiseInput) });
-                        setRaiseInput('');
-                      }}
-                    >
-                      Raise
-                    </button>
+                  <div style={styles.raisePanel}>
+                    <div style={styles.raiseInfo}>Tap chips to build your raise total.</div>
+                    <div style={styles.raiseTotalDisplay}>
+                      Raise to: <strong>${Number(raiseTotal ?? minRaiseTo).toFixed(2)}</strong>
+                    </div>
+                    <div style={styles.raiseChipRow}>
+                      {raiseDenominations.map((chip) => (
+                        <button
+                          key={chip.label}
+                          style={styles.raiseChipBtn}
+                          onClick={() => addRaiseChip(chip.value)}
+                          disabled={maxRaiseTo <= currentBet}
+                        >
+                          {chip.label}
+                        </button>
+                      ))}
+                      <button
+                        style={{ ...styles.raiseChipBtn, ...styles.raiseChipAllInBtn }}
+                        onClick={() => setRaiseTotal(maxRaiseTo)}
+                        disabled={maxRaiseTo <= currentBet}
+                      >
+                        ALL IN
+                      </button>
+                    </div>
+                    <div style={styles.raiseActionsRow}>
+                      <button
+                        style={{ ...styles.actionBtn, ...(hasValidRaise ? null : styles.disabledBtn) }}
+                        disabled={!hasValidRaise}
+                        onClick={() => {
+                          socket.emit('betting-action', { action: 'raise', amount: raiseTotal });
+                          setRaiseTotal(null);
+                        }}
+                      >
+                        Raise
+                      </button>
+                      <button
+                        style={styles.secondaryBtn}
+                        onClick={() => setRaiseTotal(minRaiseTo)}
+                        disabled={maxRaiseTo <= currentBet}
+                      >
+                        Reset
+                      </button>
+                    </div>
+                    {maxRaiseTo <= currentBet && (
+                      <div style={styles.phaseInfo}>No raise available at the current cap.</div>
+                    )}
                   </div>
                 )}
               </div>
             ) : (
-              <div style={styles.phaseInfo}>Waiting for your turn…</div>
+              <div style={styles.tvSpinPrompt}>👀 Look at the TV!</div>
             )
           )}
         </div>
@@ -633,13 +854,7 @@ function PlayerView({ gameState, socket }) {
       {stage === 'RACE_PENDING_RESULT' && (
         <div style={styles.phaseBox}>
           <div style={styles.phaseTitle}>Race in Progress!</div>
-          <div style={styles.phaseInfo}>
-            Pot: <strong>${Number(gameState.pot).toFixed(2)}</strong>
-          </div>
-          {me.positions?.length > 0 && (
-            <div style={styles.phaseInfo}>Your positions: {me.positions.join(', ')}</div>
-          )}
-          <div style={styles.phaseInfo}>Waiting for host to enter result…</div>
+          <div style={styles.tvSpinPrompt}>👀 Watch the race on the TV!</div>
         </div>
       )}
 
@@ -647,9 +862,6 @@ function PlayerView({ gameState, socket }) {
       {stage === 'PAYOUT' && (
         <div style={styles.phaseBox}>
           <div style={styles.phaseTitle}>Race Result: {gameState.raceResult}</div>
-          <div style={styles.phaseInfo}>
-            Your balance: <strong>${Number(me.balance).toFixed(2)}</strong>
-          </div>
           {me.positions?.includes(gameState.raceResult) ? (
             <div style={{ ...styles.phaseInfo, color: '#2ecc71' }}>🏆 You won this race!</div>
           ) : me.paidEntry ? (
@@ -665,9 +877,6 @@ function PlayerView({ gameState, socket }) {
       {stage === 'GAME_OVER' && (
         <div style={styles.phaseBox}>
           <div style={styles.phaseTitle}>Game Over!</div>
-          <div style={styles.phaseInfo}>
-            Final balance: <strong>${Number(me.balance).toFixed(2)}</strong>
-          </div>
           {me.balance > 0 && (
             <div style={{ ...styles.phaseInfo, color: '#2ecc71' }}>🏆 You survived!</div>
           )}
@@ -1157,16 +1366,117 @@ const styles = {
     cursor: 'pointer',
   },
   // ── In-game screens
-  playerHeader: {
+  playerHud: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+    padding: '12px 14px',
+    background: 'linear-gradient(180deg, #121212 0%, #0f141b 100%)',
+    borderBottom: '1px solid #273446',
+  },
+  playerHudTopRow: {
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '10px 20px',
-    background: '#111',
-    borderBottom: '1px solid #333',
+    alignItems: 'baseline',
+    gap: 12,
   },
-  playerName: { fontSize: 16, fontWeight: 'bold', color: '#f0c040', flex: 1 },
-  playerBalance: { fontSize: 20, fontWeight: 'bold', color: '#2ecc71', flex: 1, textAlign: 'right' },
+  playerHudName: {
+    fontSize: 17,
+    fontWeight: 'bold',
+    color: '#f0c040',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  playerHudBalance: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#2ecc71',
+    letterSpacing: 0.2,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  playerHudMoneyWrap: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+  },
+  moneyTicketBadge: {
+    display: 'inline-block',
+    fontSize: 15,
+    lineHeight: 1,
+  },
+  inlineMoneyTicket: {
+    display: 'inline-block',
+    fontSize: 13,
+    lineHeight: 1,
+  },
+  playerHudGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: 8,
+  },
+  playerHudStatCard: {
+    background: '#131a23',
+    border: '1px solid #2a3f58',
+    borderRadius: 9,
+    padding: '8px 10px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+  },
+  playerHudStatLabel: {
+    fontSize: 11,
+    color: '#89a2be',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  playerHudStatValue: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#e8f2ff',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  tokenReady: {
+    color: '#2ecc71',
+  },
+  tokenUsed: {
+    color: '#e74c3c',
+  },
+  playerHudPositionsWrap: {
+    background: '#10161f',
+    border: '1px solid #2a3f58',
+    borderRadius: 9,
+    padding: '8px 10px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+  },
+  playerHudPositionsLabel: {
+    fontSize: 11,
+    color: '#89a2be',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  playerHudPositionsRow: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  playerHudPositionPill: {
+    background: '#1c2b3d',
+    color: '#9dd7ff',
+    border: '1px solid #376086',
+    borderRadius: 999,
+    padding: '4px 10px',
+    fontSize: 13,
+    fontWeight: 'bold',
+    minWidth: 34,
+    textAlign: 'center',
+  },
+  playerHudNoPositions: {
+    color: '#70869f',
+    fontSize: 13,
+  },
   // ── Timer badge (center of header)
   timerBadge: {
     display: 'flex',
@@ -1299,19 +1609,93 @@ const styles = {
     flexDirection: 'column',
     gap: 10,
   },
-  raiseRow: {
+  cascadeHelpBtn: {
+    background: '#1a2a3f',
+    color: '#9dc0ff',
+    border: '1px solid #3c5f8a',
+    borderRadius: 999,
+    padding: '6px 10px',
+    fontSize: 12,
+    fontWeight: 'bold',
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  cascadeHelpText: {
+    background: '#111827',
+    border: '1px solid #30445f',
+    borderRadius: 8,
+    padding: '10px 12px',
+    color: '#c7d6ea',
+    fontSize: 13,
+    lineHeight: 1.4,
+  },
+  tvSpinPrompt: {
+    background: '#162338',
+    border: '1px solid #2b4f7a',
+    borderRadius: 8,
+    color: '#8fc7ff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    padding: '12px 14px',
+    textAlign: 'center',
+  },
+  raisePanel: {
+    background: '#14141a',
+    border: '1px solid #2b2b35',
+    borderRadius: 10,
+    padding: 12,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+  },
+  raiseInfo: {
+    fontSize: 13,
+    color: '#8ea0b2',
+  },
+  raiseTotalDisplay: {
+    fontSize: 16,
+    color: '#d2d8e0',
+  },
+  raiseChipRow: {
+    display: 'flex',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  raiseChipBtn: {
+    background: '#1a2a3a',
+    border: '1px solid #32526a',
+    borderRadius: 6,
+    color: '#7fc8ff',
+    fontWeight: 'bold',
+    minWidth: 66,
+    fontSize: 16,
+    padding: '10px 12px',
+    cursor: 'pointer',
+  },
+  raiseChipAllInBtn: {
+    background: '#3a1a1a',
+    border: '1px solid #7a2a2a',
+    color: '#ff9d9d',
+    minWidth: 92,
+  },
+  raiseActionsRow: {
     display: 'flex',
     gap: 10,
     alignItems: 'center',
   },
-  raiseInput: {
-    background: '#1a1a1a',
-    border: '1px solid #333',
-    borderRadius: 6,
-    color: '#fff',
-    fontSize: 16,
-    padding: '10px 12px',
-    width: 120,
+  secondaryBtn: {
+    background: '#2a2a2a',
+    color: '#bbb',
+    border: '1px solid #3a3a3a',
+    borderRadius: 8,
+    fontSize: 14,
+    fontWeight: 'bold',
+    padding: '10px 14px',
+    cursor: 'pointer',
+  },
+  disabledBtn: {
+    opacity: 0.5,
+    cursor: 'not-allowed',
   },
   // ── Group vote (voter)
   voteBox: {
