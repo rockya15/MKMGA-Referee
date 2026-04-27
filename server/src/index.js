@@ -36,10 +36,8 @@ const BOT_POSITION_SPIN_WAIT_MS = 6500;
 const BOT_COLOR_PALETTE = ['#2a2a4a', '#2f4f4f', '#5b2c6f', '#1f5f8b', '#2b7a4b', '#8b5a2b', '#6f4f28', '#4a5d23'];
 const BOT_DEFAULTS = {
   autoPick: true,
-  decisionDelayMs: 1000,
-  variableTimeoutDelay: false,
-  timeoutDelayMinMs: 500,
-  timeoutDelayMaxMs: 5000,
+  decisionDelayMinMs: 500,
+  decisionDelayMaxMs: 1500,
   preBetMode: 'AUTO',
   positionMode: 'AUTO',
   bettingMode: 'AUTO',
@@ -49,9 +47,12 @@ const BOT_DEFAULTS = {
 const BOT_POSITION_POST_SPIN_GRACE_MS = 1400;
 const BOT_CASCADE_POST_SPIN_GRACE_MS = 700;
 const BOT_AUTOMATION_HEARTBEAT_MS = 250;
+const PRE_BET_DEBUG_LOG_PATH = path.join(__dirname, '..', 'data', 'bot-prebet-debug.log');
 
 let botSettings = { ...BOT_DEFAULTS };
 let botActionTimeout = null;
+let preBetBotDecisionAtById = new Map();
+let preBetBotDecisionTimeoutById = new Map();
 let botPositionActionsAllowedAt = 0;
 let botCascadeActionsAllowedAt = 0;
 let positionTimerMissingSince = 0;
@@ -80,6 +81,24 @@ function pushSystemDebugPrint(entry) {
   systemDebugPrints.push(entry);
   if (systemDebugPrints.length > SYSTEM_DEBUG_PRINT_LIMIT) {
     systemDebugPrints = systemDebugPrints.slice(-SYSTEM_DEBUG_PRINT_LIMIT);
+  }
+}
+
+function logPreBetDebug(message) {
+  const line = `[${new Date().toISOString()}] ${message}`;
+  console.warn(line);
+  try {
+    fs.appendFileSync(PRE_BET_DEBUG_LOG_PATH, `${line}\n`);
+  } catch (error) {
+    console.error('[BOTS][PRE_BET][DBG] Failed to write debug log:', error);
+  }
+}
+
+function resetPreBetDebugLog() {
+  try {
+    fs.writeFileSync(PRE_BET_DEBUG_LOG_PATH, '');
+  } catch (error) {
+    console.error('[BOTS][PRE_BET][DBG] Failed to reset debug log:', error);
   }
 }
 
@@ -117,6 +136,105 @@ function clearBotActionTimeout() {
   if (botActionTimeout) {
     clearTimeout(botActionTimeout);
     botActionTimeout = null;
+  }
+}
+
+function clearPreBetDecisionSchedule() {
+  if (preBetBotDecisionTimeoutById.size > 0 || preBetBotDecisionAtById.size > 0) {
+    logPreBetDebug(`[BOTS][PRE_BET][DBG] Clearing schedule: timers=${preBetBotDecisionTimeoutById.size}, pendingDueAt=${preBetBotDecisionAtById.size}`);
+  }
+  for (const timeoutId of preBetBotDecisionTimeoutById.values()) {
+    clearTimeout(timeoutId);
+  }
+  preBetBotDecisionTimeoutById.clear();
+  preBetBotDecisionAtById.clear();
+}
+
+function getPendingPreBetBots() {
+  return gameState.players.filter(
+    (p) => isBotPlayer(p) && p.balance > 0 && !p.paidEntry && !p.skippedRace,
+  );
+}
+
+function executeScheduledPreBetChoice(botId) {
+  if (gameState.currentStage !== STAGES.PRE_BET) {
+    logPreBetDebug(`[BOTS][PRE_BET][DBG] Fire ignored for ${botId}: stage=${gameState.currentStage}`);
+    preBetBotDecisionAtById.delete(botId);
+    return false;
+  }
+
+  const bot = gameState.getPlayerById(botId);
+  if (!isBotPlayer(bot) || !bot || bot.balance <= 0 || bot.paidEntry || bot.skippedRace) {
+    logPreBetDebug(`[BOTS][PRE_BET][DBG] Fire ignored for ${botId}: botMissing=${!bot} paid=${Boolean(bot?.paidEntry)} skipped=${Boolean(bot?.skippedRace)} balance=${Number(bot?.balance ?? 0)}`);
+    preBetBotDecisionAtById.delete(botId);
+    return false;
+  }
+
+  const dueAt = Number(preBetBotDecisionAtById.get(bot.id));
+  const now = Date.now();
+  const lateMs = Number.isFinite(dueAt) ? now - dueAt : null;
+  logPreBetDebug(`[BOTS][PRE_BET][DBG] Fire ${bot.displayName ?? bot.id} id=${bot.id} now=${now} dueAt=${dueAt} lateMs=${lateMs ?? 'n/a'}`);
+
+  const initialChoice = pickBotPreBetChoice(bot);
+  let result = gameState.applyPreBetChoice(bot.id, initialChoice);
+  if (result?.error && initialChoice === 'SKIP') {
+    result = gameState.applyPreBetChoice(bot.id, 'PAY');
+  }
+
+  if (result?.error) {
+    console.warn(`[BOTS][PRE_BET] ${bot.id} could not submit pre-bet choice: ${result.error}`);
+    return false;
+  }
+
+  preBetBotDecisionAtById.delete(bot.id);
+  logPreBetDebug(`[BOTS][PRE_BET][DBG] Applied ${bot.displayName ?? bot.id} choice=${initialChoice} remaining=${getPendingPreBetBots().length - 1}`);
+  return true;
+}
+
+function ensurePreBetDecisionSchedule() {
+  if (gameState.currentStage !== STAGES.PRE_BET || !botSettings.autoPick) {
+    clearPreBetDecisionSchedule();
+    return;
+  }
+
+  const pendingBots = getPendingPreBetBots();
+  if (pendingBots.length === 0) {
+    clearPreBetDecisionSchedule();
+    return;
+  }
+
+  logPreBetDebug(`[BOTS][PRE_BET][DBG] Ensure schedule: pending=${pendingBots.length} min=${botSettings.decisionDelayMinMs} max=${botSettings.decisionDelayMaxMs}`);
+
+  const pendingIds = new Set(pendingBots.map((p) => p.id));
+  for (const [botId, timeoutId] of Array.from(preBetBotDecisionTimeoutById.entries())) {
+    if (!pendingIds.has(botId)) {
+      logPreBetDebug(`[BOTS][PRE_BET][DBG] Removing stale timer for ${botId}`);
+      clearTimeout(timeoutId);
+      preBetBotDecisionTimeoutById.delete(botId);
+      preBetBotDecisionAtById.delete(botId);
+    }
+  }
+
+  for (const bot of pendingBots) {
+    if (preBetBotDecisionTimeoutById.has(bot.id)) {
+      continue;
+    }
+
+    const delay = getBotActionDelayMs();
+    const scheduledAt = Date.now();
+    const dueAt = scheduledAt + delay;
+    preBetBotDecisionAtById.set(bot.id, dueAt);
+    logPreBetDebug(`[BOTS][PRE_BET][DBG] Schedule ${bot.displayName ?? bot.id} id=${bot.id} delayMs=${delay} scheduledAt=${scheduledAt} dueAt=${dueAt}`);
+    const timeoutId = setTimeout(() => {
+      preBetBotDecisionTimeoutById.delete(bot.id);
+      const acted = executeScheduledPreBetChoice(bot.id);
+      if (acted) {
+        emitGameState();
+      } else {
+        ensurePreBetDecisionSchedule();
+      }
+    }, delay);
+    preBetBotDecisionTimeoutById.set(bot.id, timeoutId);
   }
 }
 
@@ -270,10 +388,67 @@ function emitGameState() {
   queueBotAutoAction();
 }
 
+function roundToQuarter(value) {
+  return Math.round(Number(value || 0) * 4) / 4;
+}
+
+function isForcedCallOnly(playerId) {
+  const state = gameState.bettingState;
+  const player = gameState.getPlayerById(playerId);
+  if (!state || !player) return false;
+
+  const currentBet = Number(state.currentBet || 0);
+  const roundBet = Number(player.roundBet || 0);
+  const toCall = roundToQuarter(Math.max(0, currentBet - roundBet));
+  if (toCall <= 0) return false;
+  if (player.skipFoldTokenAvailable) return false;
+
+  const minRaiseTo = roundToQuarter(currentBet + 0.25);
+  const maxRaiseTo = roundToQuarter(Math.min(
+    Number(state.betCap || 0),
+    Number(player.balance || 0) + roundBet
+  ));
+  const canRaise = !state.raiseLockedPlayers?.[playerId] && maxRaiseTo >= minRaiseTo;
+
+  return !canRaise;
+}
+
+function resolveForcedCallIfNeeded() {
+  if (gameState.currentStage !== STAGES.BETTING) return false;
+  const actorId = bettingEngine.getCurrentActor();
+  if (!actorId || !isForcedCallOnly(actorId)) return false;
+
+  const actor = gameState.getPlayerById(actorId);
+  const currentBet = Number(gameState.bettingState.currentBet || 0);
+  const roundBet = Number(actor?.roundBet || 0);
+  const toCall = roundToQuarter(Math.max(0, currentBet - roundBet));
+
+  const result = bettingEngine.processAction(actorId, 'call');
+  if (result?.error) {
+    console.warn(`[BETTING] Forced-call failed for ${actorId}: ${result.error}`);
+    return false;
+  }
+
+  io.to(actorId).emit('forced-call-info', {
+    message: `Auto-called $${toCall.toFixed(2)} because your Skip/Fold token is spent and raising is unavailable.`,
+    durationMs: 5000,
+  });
+  return true;
+}
+
 function maybeStartNextBettingTimer() {
   if (gameState.currentStage !== STAGES.BETTING) {
     timerManager.clearTimer();
     return;
+  }
+
+  // Fast-forward any actor that only has CALL available.
+  let guard = 0;
+  while (gameState.currentStage === STAGES.BETTING && guard < 64) {
+    const changed = resolveForcedCallIfNeeded();
+    if (!changed) break;
+    emitGameState();
+    guard += 1;
   }
 
   const nextPlayerId = bettingEngine.getCurrentActor();
@@ -306,14 +481,37 @@ function maybeStartPositionTimer() {
 function queueBotAutoAction() {
   if (!botSettings.autoPick || !hasBotPlayers()) return;
   if (botActionTimeout) return;
+
+  if (gameState.currentStage !== STAGES.PRE_BET && preBetBotDecisionAtById.size > 0) {
+    clearPreBetDecisionSchedule();
+  }
+
+  if (gameState.currentStage === STAGES.PRE_BET) {
+    ensurePreBetDecisionSchedule();
+    return;
+  }
+
   const delay = getBotActionDelayMs();
   botActionTimeout = setTimeout(() => {
     botActionTimeout = null;
-    const acted = runOneBotAction();
+    let acted = runOneBotAction();
+    if (acted && isBurstBotPhaseActive()) {
+      // Pre-bet and vote sessions should share one delay and resolve in one burst.
+      let burstGuard = 0;
+      while (burstGuard < 128) {
+        const progressed = runOneBotAction();
+        if (!progressed) break;
+        acted = true;
+        burstGuard += 1;
+      }
+    }
     if (acted) {
       emitGameState();
       if (gameState.currentStage === STAGES.BETTING) {
         maybeStartNextBettingTimer();
+      } else if (shouldRetryBotAutoAction()) {
+        // Keep draining pending work immediately without waiting for heartbeat.
+        queueBotAutoAction();
       }
       return;
     }
@@ -375,22 +573,14 @@ function shouldRetryBotAutoAction() {
   return hasPendingBotVoteAction() || hasPendingBotTurnAction();
 }
 
-function isTimeoutSensitiveBotContext() {
-  if (timerManager.voteSession || timerManager.positionVoteSession || timerManager.cascadeResponseVoteSession) {
-    return true;
-  }
-
-  const activeTimerMode = timerManager?.timerMode;
-  return activeTimerMode === 'position' || activeTimerMode === 'betting' || activeTimerMode === 'cascade-response';
+function isBurstBotPhaseActive() {
+  if (hasPendingBotVoteAction()) return true;
+  return gameState.currentStage === STAGES.PRE_BET;
 }
 
 function getBotActionDelayMs() {
-  const baseDelay = clampInt(botSettings.decisionDelayMs, 0, 15000);
-  if (!botSettings.variableTimeoutDelay) return baseDelay;
-  if (!isTimeoutSensitiveBotContext()) return baseDelay;
-
-  const minDelay = clampInt(botSettings.timeoutDelayMinMs, 0, 15000);
-  const maxDelay = clampInt(botSettings.timeoutDelayMaxMs, 0, 15000);
+  const minDelay = clampInt(botSettings.decisionDelayMinMs, 0, 15000);
+  const maxDelay = clampInt(botSettings.decisionDelayMaxMs, 0, 15000);
   const low = Math.min(minDelay, maxDelay);
   const high = Math.max(minDelay, maxDelay);
   if (low === high) return low;
@@ -400,6 +590,32 @@ function getBotActionDelayMs() {
 function chooseFrom(array) {
   if (!Array.isArray(array) || array.length === 0) return null;
   return array[Math.floor(Math.random() * array.length)];
+}
+
+function getBotRandomRaiseTo(minRaiseTo, maxRaiseTo) {
+  const min = roundToQuarter(minRaiseTo);
+  const max = roundToQuarter(maxRaiseTo);
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max < min) {
+    return min;
+  }
+
+  // Small chance to jam to cap/all-in.
+  if (Math.random() < 0.12) {
+    return max;
+  }
+
+  // Simulate tapping variable raise chips like the phone UI.
+  const chips = [0.25, 0.5, 1, 2, 5];
+  let total = min;
+  const maxAdds = 1 + Math.floor(Math.random() * 14);
+  for (let i = 0; i < maxAdds; i += 1) {
+    if (total >= max) break;
+    const chip = chooseFrom(chips) ?? 0.25;
+    total = roundToQuarter(Math.min(max, total + chip));
+    if (Math.random() < 0.35) break;
+  }
+
+  return total;
 }
 
 function pickBotPreBetChoice(player) {
@@ -489,14 +705,14 @@ function pickBotBetAction(player) {
     if (canRaise && maxRaiseTo >= minRaiseTo) choices.push('raise');
     const action = chooseFrom(choices);
     if (action === 'raise') {
-      return { action, amount: minRaiseTo };
+      return { action, amount: getBotRandomRaiseTo(minRaiseTo, maxRaiseTo) };
     }
     return { action };
   }
 
-  // AUTO: mostly check/call, occasional fold, rare min-raise when legal.
+  // AUTO: mostly check/call, occasional fold, rare raise when legal.
   if (canRaise && maxRaiseTo >= minRaiseTo && Math.random() < 0.15) {
-    return { action: 'raise', amount: minRaiseTo };
+    return { action: 'raise', amount: getBotRandomRaiseTo(minRaiseTo, maxRaiseTo) };
   }
   if (toCall > 0 && canFold && Math.random() < 0.12) {
     return { action: 'fold' };
@@ -504,51 +720,89 @@ function pickBotBetAction(player) {
   return { action: toCall > 0 ? 'call' : 'check' };
 }
 
+function runPreBetBotBurst() {
+  const pendingBots = gameState.players.filter(
+    (p) => isBotPlayer(p) && p.balance > 0 && !p.paidEntry && !p.skippedRace,
+  );
+
+  let preBetActed = false;
+  for (const target of pendingBots) {
+    const initialChoice = pickBotPreBetChoice(target);
+    let result = gameState.applyPreBetChoice(target.id, initialChoice);
+
+    // If a skip choice is rejected (e.g., token consumed), force PAY and continue.
+    if (result?.error && initialChoice === 'SKIP') {
+      result = gameState.applyPreBetChoice(target.id, 'PAY');
+    }
+
+    if (result?.error) {
+      console.warn(`[BOTS][PRE_BET] ${target.id} could not submit pre-bet choice: ${result.error}`);
+      continue;
+    }
+
+    preBetActed = true;
+  }
+
+  return preBetActed;
+}
+
 function runOneBotAction() {
+  let acted = false;
+
   // 1) Active vote sessions: cast one pending bot vote
   if (timerManager.voteSession) {
-    const pending = timerManager.voteSession.voterIds.filter((id) => isBotPlayer(gameState.getPlayerById(id)) && !timerManager.voteSession.votes[id]);
-    if (pending.length > 0) {
+    // Burst all pending bot votes in this session so they share one delay window.
+    while (timerManager.voteSession) {
+      const pending = timerManager.voteSession.voterIds.filter((id) => isBotPlayer(gameState.getPlayerById(id)) && !timerManager.voteSession.votes[id]);
+      if (pending.length === 0) break;
       const voterId = pending[0];
       const choice = pickBotVote(timerManager.voteSession.options);
       if (choice) {
         timerManager.submitVote(voterId, choice);
-        return true;
+        acted = true;
+      } else {
+        break;
       }
     }
   }
 
   if (timerManager.positionVoteSession) {
-    const pending = timerManager.positionVoteSession.voterIds.filter((id) => isBotPlayer(gameState.getPlayerById(id)) && !timerManager.positionVoteSession.votes[id]);
-    if (pending.length > 0) {
+    while (timerManager.positionVoteSession) {
+      const pending = timerManager.positionVoteSession.voterIds.filter((id) => isBotPlayer(gameState.getPlayerById(id)) && !timerManager.positionVoteSession.votes[id]);
+      if (pending.length === 0) break;
       const voterId = pending[0];
       const choice = pickBotVote(timerManager.positionVoteSession.availablePositions);
       if (choice) {
         timerManager.submitPositionVote(voterId, choice);
-        return true;
+        acted = true;
+      } else {
+        break;
       }
     }
   }
 
   if (timerManager.cascadeResponseVoteSession) {
-    const pending = timerManager.cascadeResponseVoteSession.voterIds.filter((id) => isBotPlayer(gameState.getPlayerById(id)) && !timerManager.cascadeResponseVoteSession.votes[id]);
-    if (pending.length > 0) {
+    while (timerManager.cascadeResponseVoteSession) {
+      const pending = timerManager.cascadeResponseVoteSession.voterIds.filter((id) => isBotPlayer(gameState.getPlayerById(id)) && !timerManager.cascadeResponseVoteSession.votes[id]);
+      if (pending.length === 0) break;
       const voterId = pending[0];
       const choice = pickBotVote(['cascade', 'accept']);
       if (choice) {
         timerManager.submitCascadeResponseVote(voterId, choice);
-        return true;
+        acted = true;
+      } else {
+        break;
       }
     }
   }
 
+  if (acted) {
+    return true;
+  }
+
   // 2) Stage-driven bot actions
   if (gameState.currentStage === STAGES.PRE_BET) {
-    const target = gameState.players.find((p) => isBotPlayer(p) && p.balance > 0 && !p.paidEntry && !p.skippedRace);
-    if (!target) return false;
-    const choice = pickBotPreBetChoice(target);
-    const result = gameState.applyPreBetChoice(target.id, choice);
-    return !result.error;
+    return runPreBetBotBurst();
   }
 
   if (gameState.currentStage === STAGES.POSITION_ASSIGNMENT) {
@@ -747,18 +1001,28 @@ function clearDebugBots() {
   expectedCascadeSpinToken = null;
   clearCascadeCompletionTimeout();
   clearBotActionTimeout();
+  clearPreBetDecisionSchedule();
   clearBotPositionSpinFallback();
 
   return { success: true, removed: botIds.length };
 }
 
 function updateBotSettings(payload = {}) {
+  const nextMin = clampInt(
+    payload.decisionDelayMinMs ?? payload.timeoutDelayMinMs ?? botSettings.decisionDelayMinMs,
+    0,
+    15000
+  );
+  const nextMax = clampInt(
+    payload.decisionDelayMaxMs ?? payload.timeoutDelayMaxMs ?? botSettings.decisionDelayMaxMs,
+    0,
+    15000
+  );
+
   botSettings = {
     autoPick: typeof payload.autoPick === 'boolean' ? payload.autoPick : botSettings.autoPick,
-    decisionDelayMs: clampInt(payload.decisionDelayMs ?? botSettings.decisionDelayMs, 0, 15000),
-    variableTimeoutDelay: typeof payload.variableTimeoutDelay === 'boolean' ? payload.variableTimeoutDelay : botSettings.variableTimeoutDelay,
-    timeoutDelayMinMs: clampInt(payload.timeoutDelayMinMs ?? botSettings.timeoutDelayMinMs, 0, 15000),
-    timeoutDelayMaxMs: clampInt(payload.timeoutDelayMaxMs ?? botSettings.timeoutDelayMaxMs, 0, 15000),
+    decisionDelayMinMs: nextMin,
+    decisionDelayMaxMs: nextMax,
     preBetMode: pickMode(payload.preBetMode, ['AUTO', 'PAY', 'SKIP', 'RANDOM'], botSettings.preBetMode),
     positionMode: pickMode(payload.positionMode, ['AUTO', 'RANDOM', 'SAFE_FIRST', 'PREFER_DNF'], botSettings.positionMode),
     bettingMode: pickMode(payload.bettingMode, ['AUTO', 'CHECK_CALL', 'FOLD_IF_POSSIBLE', 'RANDOM'], botSettings.bettingMode),
@@ -768,6 +1032,11 @@ function updateBotSettings(payload = {}) {
 
   if (!botSettings.autoPick) {
     clearBotActionTimeout();
+    clearPreBetDecisionSchedule();
+  } else if (gameState.currentStage === STAGES.PRE_BET) {
+    logPreBetDebug(`[BOTS][PRE_BET][DBG] Re-rolling pending timers after settings update: min=${botSettings.decisionDelayMinMs} max=${botSettings.decisionDelayMaxMs}`);
+    clearPreBetDecisionSchedule();
+    queueBotAutoAction();
   }
 
   return { success: true, settings: botSettings };
@@ -1141,6 +1410,7 @@ io.on('connection', (socket) => {
         expectedCascadeSpinToken = null;
         clearCascadeCompletionTimeout();
         clearBotPositionSpinFallback();
+        resetPreBetDebugLog();
         result = gameState.startPreBet();
         break;
       case 'start-position-assignment':
@@ -1193,6 +1463,7 @@ io.on('connection', (socket) => {
         clearCascadeCompletionTimeout();
         timerManager.clearTimer();
         clearBotActionTimeout();
+        clearPreBetDecisionSchedule();
         clearBotPositionSpinFallback();
         result = gameState.resetGame();
         // Clear persisted state

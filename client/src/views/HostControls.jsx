@@ -152,10 +152,8 @@ function HostControls({ gameState, socket }) {
   const [maxCashCap, setMaxCashCap] = useState('15');
   const [botAddCount, setBotAddCount] = useState('4');
   const [botAutoPick, setBotAutoPick] = useState(true);
-  const [botDelayMs, setBotDelayMs] = useState('1000');
-  const [botVariableTimeoutDelay, setBotVariableTimeoutDelay] = useState(false);
-  const [botTimeoutDelayMinMs, setBotTimeoutDelayMinMs] = useState('500');
-  const [botTimeoutDelayMaxMs, setBotTimeoutDelayMaxMs] = useState('5000');
+  const [botDelayMinSec, setBotDelayMinSec] = useState('0.5');
+  const [botDelayMaxSec, setBotDelayMaxSec] = useState('1.5');
   const [botPreBetMode, setBotPreBetMode] = useState('AUTO');
   const [botPositionMode, setBotPositionMode] = useState('AUTO');
   const [botBettingMode, setBotBettingMode] = useState('AUTO');
@@ -165,6 +163,7 @@ function HostControls({ gameState, socket }) {
   const [debugPanelOpen, setDebugPanelOpen] = useState(false);
   const [debugSystemOpen, setDebugSystemOpen] = useState(false);
   const [debugBotsOpen, setDebugBotsOpen] = useState(false);
+  const [isBotSettingsDirty, setIsBotSettingsDirty] = useState(false);
   const [systemDebugPrints, setSystemDebugPrints] = useState([]);
   const [errorMsg, setErrorMsg] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
@@ -198,6 +197,21 @@ function HostControls({ gameState, socket }) {
     socket.emit('host-action', { action, ...data });
   };
 
+  const buildBotSettingsPayload = (overrides = {}) => ({
+    autoPick: overrides.autoPick ?? botAutoPick,
+    decisionDelayMinMs: overrides.decisionDelayMinMs ?? Math.max(0, Math.round(Number(botDelayMinSec || 0) * 1000)),
+    decisionDelayMaxMs: overrides.decisionDelayMaxMs ?? Math.max(0, Math.round(Number(botDelayMaxSec || 0) * 1000)),
+    preBetMode: overrides.preBetMode ?? botPreBetMode,
+    positionMode: overrides.positionMode ?? botPositionMode,
+    bettingMode: overrides.bettingMode ?? botBettingMode,
+    cascadeMode: overrides.cascadeMode ?? botCascadeMode,
+    voteMode: overrides.voteMode ?? botVoteMode,
+  });
+
+  const applyBotSettings = (overrides = {}) => {
+    handleAction('debug-bot-config', { settings: buildBotSettingsPayload(overrides) });
+  };
+
   const handleSaveRaceData = () => {
     setErrorMsg(null);
     socket.emit('host-action', { action: 'save-race-data' }, (response) => {
@@ -229,21 +243,64 @@ function HostControls({ gameState, socket }) {
   const currentPickerId = positionDraft ? wheelOrder?.[positionDraft.currentPlayerIndex] : null;
   const currentPicker = players.find((p) => p.id === currentPickerId);
   const botStartingCash = String(gameState.hostSettings?.maxCashCap ?? maxCashCap);
+  const botLogicDisabled = !botAutoPick;
 
   useEffect(() => {
     const cfg = gameState.debugTools;
     if (!cfg) return;
+    if (isBotSettingsDirty) return;
     setBotAutoPick(Boolean(cfg.autoPick));
-    setBotDelayMs(String(cfg.decisionDelayMs ?? 1000));
-    setBotVariableTimeoutDelay(Boolean(cfg.variableTimeoutDelay));
-    setBotTimeoutDelayMinMs(String(cfg.timeoutDelayMinMs ?? 500));
-    setBotTimeoutDelayMaxMs(String(cfg.timeoutDelayMaxMs ?? 5000));
+    const minMs = Number(cfg.decisionDelayMinMs ?? cfg.timeoutDelayMinMs ?? 500);
+    const maxMs = Number(cfg.decisionDelayMaxMs ?? cfg.timeoutDelayMaxMs ?? 1500);
+    setBotDelayMinSec((minMs / 1000).toString());
+    setBotDelayMaxSec((maxMs / 1000).toString());
     setBotPreBetMode(cfg.preBetMode ?? 'AUTO');
     setBotPositionMode(cfg.positionMode ?? 'AUTO');
     setBotBettingMode(cfg.bettingMode ?? 'AUTO');
     setBotCascadeMode(cfg.cascadeMode ?? 'AUTO');
     setBotVoteMode(cfg.voteMode ?? 'AUTO');
-  }, [gameState.debugTools]);
+  }, [gameState.debugTools, isBotSettingsDirty]);
+
+  useEffect(() => {
+    const cfg = gameState.debugTools;
+    if (!cfg || !isBotSettingsDirty) return;
+
+    const expected = buildBotSettingsPayload();
+    const actual = {
+      autoPick: Boolean(cfg.autoPick),
+      decisionDelayMinMs: Number(cfg.decisionDelayMinMs ?? cfg.timeoutDelayMinMs ?? 500),
+      decisionDelayMaxMs: Number(cfg.decisionDelayMaxMs ?? cfg.timeoutDelayMaxMs ?? 1500),
+      preBetMode: cfg.preBetMode ?? 'AUTO',
+      positionMode: cfg.positionMode ?? 'AUTO',
+      bettingMode: cfg.bettingMode ?? 'AUTO',
+      cascadeMode: cfg.cascadeMode ?? 'AUTO',
+      voteMode: cfg.voteMode ?? 'AUTO',
+    };
+
+    if (
+      expected.autoPick === actual.autoPick &&
+      expected.decisionDelayMinMs === actual.decisionDelayMinMs &&
+      expected.decisionDelayMaxMs === actual.decisionDelayMaxMs &&
+      expected.preBetMode === actual.preBetMode &&
+      expected.positionMode === actual.positionMode &&
+      expected.bettingMode === actual.bettingMode &&
+      expected.cascadeMode === actual.cascadeMode &&
+      expected.voteMode === actual.voteMode
+    ) {
+      setIsBotSettingsDirty(false);
+    }
+  }, [
+    gameState.debugTools,
+    isBotSettingsDirty,
+    botAutoPick,
+    botDelayMinSec,
+    botDelayMaxSec,
+    botPreBetMode,
+    botPositionMode,
+    botBettingMode,
+    botCascadeMode,
+    botVoteMode,
+  ]);
 
   return (
     <div style={styles.root}>
@@ -486,120 +543,106 @@ function HostControls({ gameState, socket }) {
 
             {debugBotsOpen && (
               <>
-                <div style={styles.hint}>Bots in game: <strong>{botPlayers.length}</strong> {gameState.debugTools?.autoPick ? '· auto-pick ON' : '· auto-pick OFF'}</div>
+                <div style={styles.hint}>Bots in game: <strong>{botPlayers.length}</strong></div>
 
-                <div style={styles.rowWrap}>
-                  <div style={styles.row}>
-                    <label style={styles.label}>Add Bots</label>
-                    <input style={styles.input} type="number" min="1" max="24" value={botAddCount} onChange={(e) => setBotAddCount(e.target.value)} />
-                    <label style={styles.labelTight}>Cash</label>
-                    <input style={{ ...styles.input, ...styles.inputDisabled }} type="number" min="0.25" step="0.25" value={botStartingCash} readOnly disabled />
-                    <button
-                      style={styles.smallBtn}
-                      onClick={() => handleAction('debug-add-bots', {
-                        count: Number(botAddCount),
-                        startingCash: Number(gameState.hostSettings?.maxCashCap ?? maxCashCap),
-                      })}
-                    >
-                      Add
-                    </button>
-                    <button style={{ ...styles.smallBtn, background: '#5a1a1a', color: '#f88' }} onClick={() => handleAction('debug-clear-bots')}>
-                      Clear Bots
-                    </button>
+                <div style={botLogicDisabled ? styles.botControlsDimmed : null}>
+                  <div style={styles.rowWrap}>
+                    <div style={styles.row}>
+                      <label style={styles.label}>Add Bots</label>
+                      <input style={styles.input} type="number" min="1" max="24" value={botAddCount} onChange={(e) => setBotAddCount(e.target.value)} />
+                      <label style={styles.labelTight}>Cash</label>
+                      <input style={{ ...styles.input, ...styles.inputDisabled }} type="number" min="0.25" step="0.25" value={botStartingCash} readOnly disabled />
+                      <button
+                        style={styles.smallBtn}
+                        onClick={() => handleAction('debug-add-bots', {
+                          count: Number(botAddCount),
+                          startingCash: Number(gameState.hostSettings?.maxCashCap ?? maxCashCap),
+                        })}
+                      >
+                        Add
+                      </button>
+                      <button style={{ ...styles.smallBtn, background: '#5a1a1a', color: '#f88' }} onClick={() => handleAction('debug-clear-bots')}>
+                        Clear Bots
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                <div style={styles.hint}>Bot cash always matches the current lobby cap.</div>
-
-                <label style={styles.checkLabelInline}>
-                  <input type="checkbox" checked={botAutoPick} onChange={(e) => setBotAutoPick(e.target.checked)} />
-                  Auto-pick when bot choices arise
-                </label>
-
-                <div style={styles.row}>
-                  <label style={styles.label}>Decision Delay (ms)</label>
-                  <input style={styles.inputWide} type="number" min="0" step="100" value={botDelayMs} onChange={(e) => setBotDelayMs(e.target.value)} />
-                </div>
-
-                <label style={styles.checkLabelInline}>
-                  <input type="checkbox" checked={botVariableTimeoutDelay} onChange={(e) => setBotVariableTimeoutDelay(e.target.checked)} />
-                  Use variable delay when timeout clocks are active
-                </label>
-
-                <div style={styles.rowWrap}>
-                  <div style={styles.row}>
-                    <label style={styles.label}>Timeout Delay Min (ms)</label>
-                    <input style={styles.input} type="number" min="0" step="100" value={botTimeoutDelayMinMs} onChange={(e) => setBotTimeoutDelayMinMs(e.target.value)} />
-                    <label style={styles.labelTight}>Max (ms)</label>
-                    <input style={styles.input} type="number" min="0" step="100" value={botTimeoutDelayMaxMs} onChange={(e) => setBotTimeoutDelayMaxMs(e.target.value)} />
+                  <div style={styles.rowWrap}>
+                    <div style={styles.row}>
+                      <label style={styles.label}>Decision Delay Min (sec)</label>
+                      <input style={styles.input} type="number" min="0" step="0.1" value={botDelayMinSec} disabled={botLogicDisabled} onChange={(e) => { setBotDelayMinSec(e.target.value); setIsBotSettingsDirty(true); }} />
+                      <label style={styles.labelTight}>Max (sec)</label>
+                      <input style={styles.input} type="number" min="0" step="0.1" value={botDelayMaxSec} disabled={botLogicDisabled} onChange={(e) => { setBotDelayMaxSec(e.target.value); setIsBotSettingsDirty(true); }} />
+                    </div>
                   </div>
-                </div>
 
-                <div style={styles.selectGrid}>
-                  <label style={styles.selectLabel}>Pre-Bet
-                    <select style={styles.select} value={botPreBetMode} onChange={(e) => setBotPreBetMode(e.target.value)}>
-                      <option value="AUTO">AUTO</option>
-                      <option value="PAY">PAY</option>
-                      <option value="SKIP">SKIP</option>
-                      <option value="RANDOM">RANDOM</option>
-                    </select>
-                  </label>
-                  <label style={styles.selectLabel}>Position
-                    <select style={styles.select} value={botPositionMode} onChange={(e) => setBotPositionMode(e.target.value)}>
-                      <option value="AUTO">AUTO</option>
-                      <option value="RANDOM">RANDOM</option>
-                      <option value="SAFE_FIRST">SAFE_FIRST</option>
-                      <option value="PREFER_DNF">PREFER_DNF</option>
-                    </select>
-                  </label>
-                  <label style={styles.selectLabel}>Betting
-                    <select style={styles.select} value={botBettingMode} onChange={(e) => setBotBettingMode(e.target.value)}>
-                      <option value="AUTO">AUTO</option>
-                      <option value="CHECK_CALL">CHECK_CALL</option>
-                      <option value="FOLD_IF_POSSIBLE">FOLD_IF_POSSIBLE</option>
-                      <option value="RANDOM">RANDOM</option>
-                    </select>
-                  </label>
-                  <label style={styles.selectLabel}>Cascade
-                    <select style={styles.select} value={botCascadeMode} onChange={(e) => setBotCascadeMode(e.target.value)}>
-                      <option value="AUTO">AUTO</option>
-                      <option value="CASCADE">CASCADE</option>
-                      <option value="ACCEPT_DNF">ACCEPT_DNF</option>
-                      <option value="RANDOM">RANDOM</option>
-                    </select>
-                  </label>
-                  <label style={styles.selectLabel}>Votes
-                    <select style={styles.select} value={botVoteMode} onChange={(e) => setBotVoteMode(e.target.value)}>
-                      <option value="AUTO">AUTO</option>
-                      <option value="RANDOM">RANDOM</option>
-                      <option value="FIRST">FIRST</option>
-                    </select>
-                  </label>
+                  <div style={styles.selectGrid}>
+                    <label style={styles.selectLabel}>Pre-Bet
+                      <select style={styles.select} value={botPreBetMode} disabled={botLogicDisabled} onChange={(e) => { setBotPreBetMode(e.target.value); setIsBotSettingsDirty(true); }}>
+                        <option value="AUTO">AUTO</option>
+                        <option value="PAY">PAY</option>
+                        <option value="SKIP">SKIP</option>
+                        <option value="RANDOM">RANDOM</option>
+                      </select>
+                    </label>
+                    <label style={styles.selectLabel}>Position
+                      <select style={styles.select} value={botPositionMode} disabled={botLogicDisabled} onChange={(e) => { setBotPositionMode(e.target.value); setIsBotSettingsDirty(true); }}>
+                        <option value="AUTO">AUTO</option>
+                        <option value="RANDOM">RANDOM</option>
+                        <option value="SAFE_FIRST">SAFE_FIRST</option>
+                        <option value="PREFER_DNF">PREFER_DNF</option>
+                      </select>
+                    </label>
+                    <label style={styles.selectLabel}>Betting
+                      <select style={styles.select} value={botBettingMode} disabled={botLogicDisabled} onChange={(e) => { setBotBettingMode(e.target.value); setIsBotSettingsDirty(true); }}>
+                        <option value="AUTO">AUTO</option>
+                        <option value="CHECK_CALL">CHECK_CALL</option>
+                        <option value="FOLD_IF_POSSIBLE">FOLD_IF_POSSIBLE</option>
+                        <option value="RANDOM">RANDOM</option>
+                      </select>
+                    </label>
+                    <label style={styles.selectLabel}>Cascade
+                      <select style={styles.select} value={botCascadeMode} disabled={botLogicDisabled} onChange={(e) => { setBotCascadeMode(e.target.value); setIsBotSettingsDirty(true); }}>
+                        <option value="AUTO">AUTO</option>
+                        <option value="CASCADE">CASCADE</option>
+                        <option value="ACCEPT_DNF">ACCEPT_DNF</option>
+                        <option value="RANDOM">RANDOM</option>
+                      </select>
+                    </label>
+                    <label style={styles.selectLabel}>Votes
+                      <select style={styles.select} value={botVoteMode} disabled={botLogicDisabled} onChange={(e) => { setBotVoteMode(e.target.value); setIsBotSettingsDirty(true); }}>
+                        <option value="AUTO">AUTO</option>
+                        <option value="RANDOM">RANDOM</option>
+                        <option value="FIRST">FIRST</option>
+                      </select>
+                    </label>
+                  </div>
                 </div>
 
                 <div style={styles.row}>
                   <button
                     style={styles.btn}
-                    onClick={() => handleAction('debug-bot-config', {
-                      settings: {
-                        autoPick: botAutoPick,
-                        decisionDelayMs: Number(botDelayMs),
-                        variableTimeoutDelay: botVariableTimeoutDelay,
-                        timeoutDelayMinMs: Number(botTimeoutDelayMinMs),
-                        timeoutDelayMaxMs: Number(botTimeoutDelayMaxMs),
-                        preBetMode: botPreBetMode,
-                        positionMode: botPositionMode,
-                        bettingMode: botBettingMode,
-                        cascadeMode: botCascadeMode,
-                        voteMode: botVoteMode,
-                      }
-                    })}
+                    disabled={botLogicDisabled}
+                    onClick={() => applyBotSettings()}
                   >
                     Apply Bot Settings
                   </button>
-                  <button style={{ ...styles.smallBtn, background: '#333', color: '#ddd' }} onClick={() => handleAction('debug-run-bot-step')}>
+                  <button style={{ ...styles.smallBtn, background: '#333', color: '#ddd' }} disabled={botLogicDisabled} onClick={() => handleAction('debug-run-bot-step')}>
                     Run One Bot Step
                   </button>
+                  <label style={styles.botMasterSwitchLabel}>
+                    <input
+                      type="checkbox"
+                      checked={botAutoPick}
+                      onChange={(e) => {
+                        const enabled = e.target.checked;
+                        setBotAutoPick(enabled);
+                        setIsBotSettingsDirty(true);
+                        applyBotSettings({ autoPick: enabled });
+                      }}
+                    />
+                    Bot Logic Enabled
+                  </label>
                 </div>
               </>
             )}
@@ -761,6 +804,27 @@ const styles = {
   hint: { fontSize: 13, color: '#aaa' },
   row: { display: 'flex', alignItems: 'center', gap: 10 },
   rowWrap: { display: 'flex', flexWrap: 'wrap', gap: 10 },
+  botControlsDimmed: {
+    opacity: 0.45,
+    filter: 'grayscale(0.35)',
+  },
+  botFooterRow: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    marginTop: 6,
+  },
+  botMasterSwitchLabel: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    fontSize: 12,
+    color: '#d7dde7',
+    background: '#171717',
+    border: '1px solid #2d2d2d',
+    borderRadius: 999,
+    padding: '6px 10px',
+    cursor: 'pointer',
+  },
   label: { fontSize: 13, color: '#aaa', minWidth: 120 },
   labelTight: { fontSize: 12, color: '#888' },
   input: {

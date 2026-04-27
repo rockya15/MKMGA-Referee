@@ -14,7 +14,9 @@ function PlayerView({ gameState, socket }) {
   const [showDisplacedCascadeHelp, setShowDisplacedCascadeHelp] = useState(false);
   const [raiseTotal, setRaiseTotal] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
+  const [forcedCallNotice, setForcedCallNotice] = useState(null);
   const storedCreds = useRef(null);
+  const forcedCallNoticeTimeoutRef = useRef(null);
 
   // ── Group-vote & timer state ─────────────────────────────────────────────────
   const [groupVote, setGroupVote] = useState(null); // { timedOutPlayer, voters, options }
@@ -84,6 +86,30 @@ function PlayerView({ gameState, socket }) {
     return () => {
       socket.off('error', onError);
       socket.off('join-error', onJoinError);
+    };
+  }, [socket]);
+
+  useEffect(() => {
+    const onForcedCallInfo = (data) => {
+      const message = String(data?.message || '').trim() || 'Auto-called because only CALL was available.';
+      const durationMs = Number.isFinite(Number(data?.durationMs)) ? Number(data.durationMs) : 5000;
+      setForcedCallNotice(message);
+      if (forcedCallNoticeTimeoutRef.current) {
+        clearTimeout(forcedCallNoticeTimeoutRef.current);
+      }
+      forcedCallNoticeTimeoutRef.current = setTimeout(() => {
+        setForcedCallNotice(null);
+        forcedCallNoticeTimeoutRef.current = null;
+      }, Math.max(250, durationMs));
+    };
+
+    socket.on('forced-call-info', onForcedCallInfo);
+    return () => {
+      socket.off('forced-call-info', onForcedCallInfo);
+      if (forcedCallNoticeTimeoutRef.current) {
+        clearTimeout(forcedCallNoticeTimeoutRef.current);
+        forcedCallNoticeTimeoutRef.current = null;
+      }
     };
   }, [socket]);
 
@@ -271,6 +297,7 @@ function PlayerView({ gameState, socket }) {
   const canRaise = !gameState.bettingState?.raiseLockedPlayers?.[me?.id];
   const hasValidRaise =
     Number.isFinite(raiseTotal) && raiseTotal > currentBet && raiseTotal <= maxRaiseTo;
+  const bettingIdlePrompt = forcedCallNotice || '👀 Look at the TV!';
 
   useEffect(() => {
     if (!isMyBetTurn || !canRaise || maxRaiseTo <= currentBet) {
@@ -872,9 +899,9 @@ function PlayerView({ gameState, socket }) {
           ) : (
             /* ── Normal betting UI ───────────────────────────────── */
             me.allIn ? (
-              <div style={styles.tvSpinPrompt}>👀 Look at the TV!</div>
+              <div style={forcedCallNotice ? styles.forcedCallPrompt : styles.tvSpinPrompt}>{bettingIdlePrompt}</div>
             ) : me.folded ? (
-              <div style={styles.tvSpinPrompt}>👀 Look at the TV!</div>
+              <div style={forcedCallNotice ? styles.forcedCallPrompt : styles.tvSpinPrompt}>{bettingIdlePrompt}</div>
             ) : !me.paidEntry ? (
               <div style={styles.phaseInfo}>You skipped this race.</div>
             ) : isMyBetTurn ? (
@@ -955,7 +982,7 @@ function PlayerView({ gameState, socket }) {
                 )}
               </div>
             ) : (
-              <div style={styles.tvSpinPrompt}>👀 Look at the TV!</div>
+              <div style={forcedCallNotice ? styles.forcedCallPrompt : styles.tvSpinPrompt}>{bettingIdlePrompt}</div>
             )
           )}
         </div>
@@ -1802,6 +1829,16 @@ const styles = {
     borderRadius: 8,
     color: '#8fc7ff',
     fontSize: 16,
+    fontWeight: 'bold',
+    padding: '12px 14px',
+    textAlign: 'center',
+  },
+  forcedCallPrompt: {
+    background: '#2b2209',
+    border: '1px solid #9a7a2e',
+    borderRadius: 8,
+    color: '#f0c040',
+    fontSize: 15,
     fontWeight: 'bold',
     padding: '12px 14px',
     textAlign: 'center',
