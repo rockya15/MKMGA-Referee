@@ -199,3 +199,8 @@ code {
   15%  { opacity: 1;   transform: translateX(-50%) translateY(-6px); }
   100% { opacity: 0;   transform: translateX(-50%) translateY(-44px); }
 }
+
+.host-leaderboard-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}

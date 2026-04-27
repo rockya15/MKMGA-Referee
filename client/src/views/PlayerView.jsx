@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import MoneyTicker from '../components/MoneyTicker';
+import Avatar from '../components/Avatar';
 
 const ALL_POSITIONS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', 'DNF'];
 const GENTLE_DNF_SLOTS = [1, 2, 4, 8, 13];
@@ -1095,11 +1096,11 @@ function JoinForm({ onJoin, onBack, error, maxCashCap }) {
 
         {/* Profile picture */}
         <div style={styles.avatarRow}>
-          {previewUrl ? (
-            <img src={previewUrl} alt="avatar" style={styles.avatarPreview} />
-          ) : (
-            <div style={{ ...styles.avatarPlaceholder, background: formData.favoriteColor, color: '#e8ecf6' }}>{(formData.displayName || formData.realName || '?')[0]?.toUpperCase() ?? '?'}</div>
-          )}
+          <Avatar
+            player={{ displayName: formData.displayName, realName: formData.realName, profileImageUrl: previewUrl, favoriteColor: formData.favoriteColor }}
+            size={64}
+            getFavoriteColor={(p) => (/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(String(p?.favoriteColor || '').trim()) ? p.favoriteColor : '#2a2a4a')}
+          />
           <label style={styles.avatarUploadBtn}>
             {uploading ? 'Uploading…' : previewUrl ? 'Change Photo' : 'Upload Photo (optional)'}
             <input
@@ -1233,7 +1234,6 @@ function ReconnectForm({ players, onReconnect, onBack, error }) {
 
   // Step 2 — password input after selecting a player
   if (selected) {
-    const initial = (selected.displayName || selected.realName || '?')[0].toUpperCase();
     return (
       <div style={styles.root}>
         <div style={styles.joinHeaderRow}>
@@ -1241,9 +1241,7 @@ function ReconnectForm({ players, onReconnect, onBack, error }) {
           <button type="button" style={styles.backBtn} onClick={() => { setSelected(null); setPassword(''); }}>← Back</button>
         </div>
         <div style={styles.rcSelectedCard}>
-          {selected.profileImageUrl
-            ? <img src={selected.profileImageUrl} alt="" style={styles.rcSelectedAvatar} />
-            : <div style={{ ...styles.rcSelectedAvatar, ...styles.rcAvatarFallback, background: getFavoriteColor(selected) }}>{initial}</div>}
+          <Avatar player={selected} size={72} getFavoriteColor={getFavoriteColor} />
           <div>
             <div style={styles.rcSelectedName}>{selected.displayName}</div>
             <div style={styles.rcSelectedReal}>{selected.realName}</div>
@@ -1282,12 +1280,9 @@ function ReconnectForm({ players, onReconnect, onBack, error }) {
       {error && <div style={{ ...styles.joinWarning, margin: '0 20px 10px' }}>{error}</div>}
       <div style={styles.rcGrid}>
         {players.map((p) => {
-          const init = (p.displayName || p.realName || '?')[0].toUpperCase();
           return (
             <button key={p.realName} style={styles.rcCard} onClick={() => setSelected(p)}>
-              {p.profileImageUrl
-                ? <img src={p.profileImageUrl} alt="" style={styles.rcCardAvatar} />
-                : <div style={{ ...styles.rcCardAvatar, ...styles.rcAvatarFallback, background: getFavoriteColor(p) }}>{init}</div>}
+              <Avatar player={p} size={64} getFavoriteColor={getFavoriteColor} />
               <div style={styles.rcCardDisplayName}>{p.displayName}</div>
               <div style={styles.rcCardRealName}>{p.realName}</div>
             </button>

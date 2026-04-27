@@ -1,5 +1,7 @@
 ﻿# MKMGA Referee — System Plan
 
+ALWAYS HOST ON LOCALHOST:3000
+
 ## Overview
 
 A Jackbox-style game system for **MKMGA** — a game where players watch a streamer play Mario Kart and bet on where he places.
@@ -416,7 +418,7 @@ Poker-style betting in wheel spin order.
 
 #### Rules
 - Turn order follows **wheel spin order** (first spun = first to act)
-- Players may raise multiple times per round
+- A Player may raise one times per round
 - When a player raises, all players who acted **before** the raiser are re-queued — they must **Call** or **Fold** only. Re-queued players may not raise again. Only players who have not yet acted in the current raise cycle may raise.
 - **Bet cap = the lowest-funded paying player's remaining balance at the start of the betting phase** (after entry fee, before any bets). Non-payers excluded. Once the cumulative bet hits that ceiling:
   - The Raise option is removed from all remaining players' UIs

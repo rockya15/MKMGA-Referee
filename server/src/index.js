@@ -37,6 +37,9 @@ const BOT_COLOR_PALETTE = ['#2a2a4a', '#2f4f4f', '#5b2c6f', '#1f5f8b', '#2b7a4b'
 const BOT_DEFAULTS = {
   autoPick: true,
   decisionDelayMs: 1000,
+  variableTimeoutDelay: false,
+  timeoutDelayMinMs: 500,
+  timeoutDelayMaxMs: 5000,
   preBetMode: 'AUTO',
   positionMode: 'AUTO',
   bettingMode: 'AUTO',
@@ -53,6 +56,32 @@ let botPositionActionsAllowedAt = 0;
 let botCascadeActionsAllowedAt = 0;
 let positionTimerMissingSince = 0;
 let botPositionSpinFallbackTimeout = null;
+const SYSTEM_DEBUG_PRINT_LIMIT = 200;
+let systemDebugPrints = [];
+
+function sanitizeSystemDebugPrint(raw = {}) {
+  return {
+    at: new Date().toISOString(),
+    source: String(raw.source || 'unknown'),
+    algoVersion: String(raw.algoVersion || ''),
+    stage: String(raw.stage || ''),
+    phase: String(raw.phase || ''),
+    enabled: Boolean(raw.enabled),
+    focusPlayerId: raw.focusPlayerId ? String(raw.focusPlayerId) : null,
+    scrollTop: Number.isFinite(Number(raw.scrollTop)) ? Number(raw.scrollTop) : 0,
+    maxScroll: Number.isFinite(Number(raw.maxScroll)) ? Number(raw.maxScroll) : 0,
+    direction: Number(raw.direction) === -1 ? -1 : 1,
+    edgePauseMsRemaining: Number.isFinite(Number(raw.edgePauseMsRemaining)) ? Math.max(0, Math.round(Number(raw.edgePauseMsRemaining))) : 0,
+    suspendMsRemaining: Number.isFinite(Number(raw.suspendMsRemaining)) ? Math.max(0, Math.round(Number(raw.suspendMsRemaining))) : 0,
+  };
+}
+
+function pushSystemDebugPrint(entry) {
+  systemDebugPrints.push(entry);
+  if (systemDebugPrints.length > SYSTEM_DEBUG_PRINT_LIMIT) {
+    systemDebugPrints = systemDebugPrints.slice(-SYSTEM_DEBUG_PRINT_LIMIT);
+  }
+}
 
 function clampInt(value, min, max) {
   const n = Number(value);
@@ -277,7 +306,7 @@ function maybeStartPositionTimer() {
 function queueBotAutoAction() {
   if (!botSettings.autoPick || !hasBotPlayers()) return;
   if (botActionTimeout) return;
-  const delay = clampInt(botSettings.decisionDelayMs, 0, 15000);
+  const delay = getBotActionDelayMs();
   botActionTimeout = setTimeout(() => {
     botActionTimeout = null;
     const acted = runOneBotAction();
@@ -344,6 +373,28 @@ function hasPendingBotTurnAction() {
 function shouldRetryBotAutoAction() {
   if (!botSettings.autoPick || !hasBotPlayers()) return false;
   return hasPendingBotVoteAction() || hasPendingBotTurnAction();
+}
+
+function isTimeoutSensitiveBotContext() {
+  if (timerManager.voteSession || timerManager.positionVoteSession || timerManager.cascadeResponseVoteSession) {
+    return true;
+  }
+
+  const activeTimerMode = timerManager?.timerMode;
+  return activeTimerMode === 'position' || activeTimerMode === 'betting' || activeTimerMode === 'cascade-response';
+}
+
+function getBotActionDelayMs() {
+  const baseDelay = clampInt(botSettings.decisionDelayMs, 0, 15000);
+  if (!botSettings.variableTimeoutDelay) return baseDelay;
+  if (!isTimeoutSensitiveBotContext()) return baseDelay;
+
+  const minDelay = clampInt(botSettings.timeoutDelayMinMs, 0, 15000);
+  const maxDelay = clampInt(botSettings.timeoutDelayMaxMs, 0, 15000);
+  const low = Math.min(minDelay, maxDelay);
+  const high = Math.max(minDelay, maxDelay);
+  if (low === high) return low;
+  return low + Math.floor(Math.random() * (high - low + 1));
 }
 
 function chooseFrom(array) {
@@ -635,6 +686,15 @@ function settleRaceAndPersistSummary(placement) {
   return result;
 }
 
+function getCurrentWinnerNames(snapshot) {
+  const result = String(snapshot?.raceResult || '').trim();
+  if (!result) return [];
+
+  return (snapshot?.players || [])
+    .filter((player) => player?.paidEntry && !player?.folded && Array.isArray(player?.positions) && player.positions.includes(result))
+    .map((player) => player.displayName ?? player.realName ?? player.id);
+}
+
 function addDebugBots(count, startingCash) {
   if (gameState.currentStage !== STAGES.LOBBY || !gameState.hostSettings.lobbyOpen) {
     return { error: 'Bots can only be added while the lobby is open.' };
@@ -696,6 +756,9 @@ function updateBotSettings(payload = {}) {
   botSettings = {
     autoPick: typeof payload.autoPick === 'boolean' ? payload.autoPick : botSettings.autoPick,
     decisionDelayMs: clampInt(payload.decisionDelayMs ?? botSettings.decisionDelayMs, 0, 15000),
+    variableTimeoutDelay: typeof payload.variableTimeoutDelay === 'boolean' ? payload.variableTimeoutDelay : botSettings.variableTimeoutDelay,
+    timeoutDelayMinMs: clampInt(payload.timeoutDelayMinMs ?? botSettings.timeoutDelayMinMs, 0, 15000),
+    timeoutDelayMaxMs: clampInt(payload.timeoutDelayMaxMs ?? botSettings.timeoutDelayMaxMs, 0, 15000),
     preBetMode: pickMode(payload.preBetMode, ['AUTO', 'PAY', 'SKIP', 'RANDOM'], botSettings.preBetMode),
     positionMode: pickMode(payload.positionMode, ['AUTO', 'RANDOM', 'SAFE_FIRST', 'PREFER_DNF'], botSettings.positionMode),
     bettingMode: pickMode(payload.bettingMode, ['AUTO', 'CHECK_CALL', 'FOLD_IF_POSSIBLE', 'RANDOM'], botSettings.bettingMode),
@@ -846,6 +909,7 @@ io.on('connection', (socket) => {
 
   // Send current game state
   socket.emit('game-state', getClientGameState());
+  socket.emit('system-debug-snapshot', systemDebugPrints);
 
   // Handle player join (new registration, lobby only)
   socket.on('join', (data) => {
@@ -1029,6 +1093,13 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Lightweight runtime diagnostics emitted by HostView and displayed in HostControls.
+  socket.on('system-debug-print', (data) => {
+    const entry = sanitizeSystemDebugPrint(data);
+    pushSystemDebugPrint(entry);
+    io.emit('system-debug-print', entry);
+  });
+
   // ── Host admin actions (kick, set-balance, set-positions) ───────────────────
   socket.on('host-admin', (data) => {
     const { action, playerId } = data || {};
@@ -1055,7 +1126,7 @@ io.on('connection', (socket) => {
   });
 
   // Handle host actions
-  socket.on('host-action', (data) => {
+  socket.on('host-action', (data, ack) => {
     let result = { success: true };
     switch (data.action) {
       case 'open-lobby':
@@ -1101,6 +1172,21 @@ io.on('connection', (socket) => {
       case 'record-race-result':
         result = settleRaceAndPersistSummary(data.placement);
         break;
+      case 'save-race-data': {
+        const snapshot = gameState.toSnapshot();
+        const winners = getCurrentWinnerNames(snapshot);
+        const archiveResult = stateStore.saveRaceArchive(snapshot, { winners });
+        if (archiveResult.error) {
+          result = { error: archiveResult.error };
+          break;
+        }
+        result = {
+          success: true,
+          archiveDir: archiveResult.archiveDir,
+          folderName: archiveResult.folderName,
+        };
+        break;
+      }
       case 'reset-game': {
         pendingPositionAssignmentFinalize = false;
         expectedCascadeSpinToken = null;
@@ -1143,11 +1229,13 @@ io.on('connection', (socket) => {
 
     if (result.error) {
       socket.emit('error', result.error);
+      if (typeof ack === 'function') ack(result);
       return;
     }
 
     emitGameState();
     maybeStartNextBettingTimer();
+    if (typeof ack === 'function') ack(result);
   });
 
   // Handle race complete from sidecar

@@ -2,11 +2,18 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import SpinningWheel from '../components/SpinningWheel';
 import MoneyTicker from '../components/MoneyTicker';
 import MoneyDelta from '../components/MoneyDelta';
+import Avatar from '../components/Avatar';
+import StackedAvatars from '../components/StackedAvatars';
 
 // Which stages show the wheel panel
 const WHEEL_STAGES = ['POSITION_ASSIGNMENT'];
 const CASCADE_PRE_SPIN_DELAY_MS = 5000;
 const ACTIVE_PANEL_TRANSITION_MS = 760;
+const LEADERBOARD_AUTO_SCROLL_SPEED_PX_PER_SECOND = 52;
+const LEADERBOARD_AUTO_SCROLL_PAUSE_MS = 3000;
+const LEADERBOARD_FOCUS_OVERRIDE_MS = 2600;
+const LEADERBOARD_MANUAL_OVERRIDE_MS = 4500;
+const LEADERBOARD_PANEL_WIDTH = 460;
 const LEADERBOARD_POSITION_ORDER = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', 'DNF'];
 const LEADERBOARD_POSITION_RANK = new Map(LEADERBOARD_POSITION_ORDER.map((position, index) => [position, index]));
 // How long to hold the cascade result on-screen before telling the server the spin is done.
@@ -23,6 +30,235 @@ function getLeaderboardPosition(player) {
     const rightRank = LEADERBOARD_POSITION_RANK.get(right) ?? Number.MAX_SAFE_INTEGER;
     return leftRank - rightRank;
   })[0];
+}
+
+function isTokenSpentThisRace(player) {
+  return Boolean(!player?.skipFoldTokenAvailable && (player?.skippedRace || player?.folded));
+}
+
+function useLeaderboardAutoScroll({
+  containerRef,
+  rowRefs,
+  enabled,
+  focusPlayerId,
+  speedPxPerSecond,
+  edgePauseMs,
+  focusOverrideMs,
+  manualOverrideMs,
+  debugReporter,
+}) {
+  const rafRef = useRef(null);
+  const directionRef = useRef(1);
+  const lastTsRef = useRef(0);
+  const carryPxRef = useRef(0);
+  const edgePauseUntilTsRef = useRef(0);
+  const suspendUntilTsRef = useRef(0);
+  const lastFocusedPlayerIdRef = useRef(null);
+  const lastDebugEmitTsRef = useRef(0);
+
+  useEffect(() => {
+    if (!enabled || !focusPlayerId) {
+      lastFocusedPlayerIdRef.current = null;
+      return;
+    }
+
+    const focusChanged = lastFocusedPlayerIdRef.current !== focusPlayerId;
+    lastFocusedPlayerIdRef.current = focusPlayerId;
+    if (!focusChanged) return;
+
+    const el = containerRef.current;
+    if (!el) return;
+    const row = rowRefs.current.get(focusPlayerId);
+    if (!row) return;
+
+    const max = Math.max(0, el.scrollHeight - el.clientHeight);
+    const target = row.offsetTop - (el.clientHeight / 2) + (row.clientHeight / 2);
+    el.scrollTo({ top: Math.max(0, Math.min(max, target)), behavior: 'smooth' });
+    suspendUntilTsRef.current = performance.now() + focusOverrideMs;
+  }, [containerRef, rowRefs, enabled, focusPlayerId, focusOverrideMs]);
+
+  useEffect(() => {
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+
+    const emitDebug = (ts, phase) => {
+      if (typeof debugReporter !== 'function') return;
+      if (ts - lastDebugEmitTsRef.current < 400) return;
+      lastDebugEmitTsRef.current = ts;
+      const el = containerRef.current;
+      const maxScroll = el ? Math.max(0, el.scrollHeight - el.clientHeight) : 0;
+      debugReporter({
+        algoVersion: 'v2-carry-52',
+        phase,
+        enabled,
+        focusPlayerId: focusPlayerId ?? null,
+        scrollTop: Number(el?.scrollTop ?? 0),
+        maxScroll,
+        direction: directionRef.current,
+        edgePauseMsRemaining: Math.max(0, Math.round(edgePauseUntilTsRef.current - ts)),
+        suspendMsRemaining: Math.max(0, Math.round(suspendUntilTsRef.current - ts)),
+      });
+    };
+
+    const tick = (ts) => {
+      const el = containerRef.current;
+      if (!el) {
+        emitDebug(ts, 'no-container');
+        rafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      if (!enabled) {
+        lastTsRef.current = ts;
+        emitDebug(ts, 'disabled');
+        rafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+      if (!lastTsRef.current) lastTsRef.current = ts;
+
+      if (ts < edgePauseUntilTsRef.current || ts < suspendUntilTsRef.current) {
+        lastTsRef.current = ts;
+        emitDebug(ts, 'paused');
+        rafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      const dt = (ts - lastTsRef.current) / 1000;
+      lastTsRef.current = ts;
+
+      const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
+      if (maxScroll <= 0) {
+        emitDebug(ts, 'no-overflow');
+        rafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      const signedDelta = (directionRef.current * speedPxPerSecond * dt) + carryPxRef.current;
+      const wholePx = signedDelta >= 0 ? Math.floor(signedDelta) : Math.ceil(signedDelta);
+      carryPxRef.current = signedDelta - wholePx;
+      let next = el.scrollTop + wholePx;
+      const hitBottom = next >= maxScroll && directionRef.current > 0 && wholePx > 0;
+      const hitTop = next <= 0 && directionRef.current < 0 && wholePx < 0;
+
+      if (hitBottom) {
+        next = maxScroll;
+        directionRef.current = -1;
+        carryPxRef.current = 0;
+        edgePauseUntilTsRef.current = ts + edgePauseMs;
+      } else if (hitTop) {
+        next = 0;
+        directionRef.current = 1;
+        carryPxRef.current = 0;
+        edgePauseUntilTsRef.current = ts + edgePauseMs;
+      }
+      el.scrollTop = next;
+      emitDebug(ts, 'scrolling');
+
+      rafRef.current = requestAnimationFrame(tick);
+    };
+
+    rafRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [containerRef, enabled, focusPlayerId, speedPxPerSecond, edgePauseMs, debugReporter]);
+
+  const onManualWheel = useCallback((e) => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    suspendUntilTsRef.current = performance.now() + manualOverrideMs;
+
+    const max = Math.max(0, el.scrollHeight - el.clientHeight);
+    if (max <= 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
+    const atTop = el.scrollTop <= 0;
+    const atBottom = el.scrollTop >= max - 1;
+    if ((e.deltaY < 0 && atTop) || (e.deltaY > 0 && atBottom)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
+    const next = Math.max(0, Math.min(max, el.scrollTop + e.deltaY));
+    if (next !== el.scrollTop) {
+      e.preventDefault();
+      el.scrollTop = next;
+    }
+  }, [containerRef, manualOverrideMs]);
+
+  return onManualWheel;
+}
+
+function getFirstName(name) {
+  const safe = String(name || '').trim();
+  if (!safe) return 'Player';
+  return safe.split(/\s+/)[0];
+}
+
+function getClosestPositionRankToResult(player, resultRank) {
+  const positions = Array.isArray(player?.positions) ? player.positions : [];
+  if (!Number.isFinite(resultRank) || positions.length === 0) return Number.MAX_SAFE_INTEGER;
+
+  let bestRank = Number.MAX_SAFE_INTEGER;
+  let bestDistance = Number.MAX_SAFE_INTEGER;
+  for (const pos of positions) {
+    const rank = LEADERBOARD_POSITION_RANK.get(String(pos));
+    if (!Number.isFinite(rank)) continue;
+    const distance = Math.abs(rank - resultRank);
+    if (distance < bestDistance || (distance === bestDistance && rank < bestRank)) {
+      bestDistance = distance;
+      bestRank = rank;
+    }
+  }
+  return bestRank;
+}
+
+function PayoutActiveElement({ winners, raceResult, getFavoriteColor }) {
+  const shown = winners.slice(0, 3);
+  const overflow = winners.slice(3);
+  const overflowNames = overflow.map((player) => getFirstName(player.displayName || player.realName || player.id));
+
+  if (winners.length === 0) {
+    return (
+      <div style={styles.payoutPanel}>
+        <div style={styles.payoutTitle}>Payout</div>
+        <div style={styles.payoutSubtitle}>No winning cards for position {raceResult ?? 'N/A'} this race.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.payoutPanel}>
+      <div style={styles.payoutTitle}>{winners.length === 1 ? 'Winner' : 'Winners'}</div>
+      <div style={styles.payoutSubtitle}>Hit position: <strong>{raceResult ?? 'N/A'}</strong></div>
+      <div style={styles.payoutWinnersRow}>
+        {shown.map((player) => {
+          const firstName = getFirstName(player.displayName || player.realName || player.id);
+          return (
+            <div key={player.id} style={styles.payoutWinnerTile}>
+              <Avatar player={player} size={80} borderWidth={3} getFavoriteColor={getFavoriteColor} />
+              <div style={styles.payoutWinnerName}>{firstName}</div>
+            </div>
+          );
+        })}
+      </div>
+      {overflow.length > 0 && (
+        <div style={styles.payoutOverflowText}>
+          +{overflow.length} more: {overflowNames.join(', ')}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function PresenceSlide({ show, direction = 'down', duration = 760, children, style }) {
@@ -154,7 +390,7 @@ function VoteActiveElement({ players, groupVote, voteResult, voteTimeLeft, voteC
 }
 
 function HostView({ gameState, socket }) {
-  const { currentStage, players, wheelOrder, positionDraft, pot, raceNumber, entryFee } = gameState;
+  const { currentStage, players, wheelOrder, positionDraft, pot, raceNumber, entryFee, raceResult } = gameState;
 
   const [groupVote, setGroupVote] = useState(null);
   const [voteTimeLeft, setVoteTimeLeft] = useState(0);
@@ -328,10 +564,17 @@ function HostView({ gameState, socket }) {
   const [activeElementReady, setActiveElementReady] = useState(false);
   const [leaderboardExpanded, setLeaderboardExpanded] = useState(!WHEEL_STAGES.includes(currentStage));
   const leaderboardRef = useRef(null);
+  const lbStickyHeaderRef = useRef(null);
+  const [lbHeaderHeight, setLbHeaderHeight] = useState(58);
+  useEffect(() => {
+    const el = lbStickyHeaderRef.current;
+    if (!el) return undefined;
+    const ro = new ResizeObserver(() => setLbHeaderHeight(el.getBoundingClientRect().height));
+    ro.observe(el);
+    setLbHeaderHeight(el.getBoundingClientRect().height);
+    return () => ro.disconnect();
+  }, []);
   const rowRefs = useRef(new Map());
-  const autoScrollDirectionRef = useRef(1);
-  const autoScrollRafRef = useRef(null);
-  const autoScrollLastTsRef = useRef(0);
 
   const prevPickerIndexRef = useRef(null);
   const positionDraftRef = useRef(positionDraft);
@@ -443,18 +686,71 @@ function HostView({ gameState, socket }) {
     const raw = String(player?.favoriteColor || '').trim();
     return /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(raw) ? raw : '#2a2a4a';
   };
-  const sortedPlayers = [...players]
-    .filter((player) => getLeaderboardPosition(player) !== null)
-    .sort((left, right) => {
-      const positionDiff = (LEADERBOARD_POSITION_RANK.get(getLeaderboardPosition(left)) ?? Number.MAX_SAFE_INTEGER)
-        - (LEADERBOARD_POSITION_RANK.get(getLeaderboardPosition(right)) ?? Number.MAX_SAFE_INTEGER);
-      if (positionDiff !== 0) return positionDiff;
-      return left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' });
-    });
-  const unsortedPlayers = [...players]
-    .filter((player) => getLeaderboardPosition(player) === null)
-    .sort((left, right) => left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' }));
-  const leaderboardPlayerCount = sortedPlayers.length + unsortedPlayers.length;
+  const skippedOrFoldedPlayers = [...players]
+    .filter((player) => isTokenSpentThisRace(player));
+  const activePlayers = [...players]
+    .filter((player) => !isTokenSpentThisRace(player));
+  const wheelOrderRank = new Map((wheelOrder ?? []).map((playerId, index) => [playerId, index]));
+  const compareByWheelOrder = (left, right) => {
+    const leftRank = wheelOrderRank.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+    const rightRank = wheelOrderRank.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    return left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' });
+  };
+  const payoutResultRank = LEADERBOARD_POSITION_RANK.get(String(raceResult ?? ''));
+  const compareByPayoutCloseness = (left, right) => {
+    const leftClosestRank = getClosestPositionRankToResult(left, payoutResultRank);
+    const rightClosestRank = getClosestPositionRankToResult(right, payoutResultRank);
+    const leftDistance = Number.isFinite(leftClosestRank) ? Math.abs(leftClosestRank - payoutResultRank) : Number.MAX_SAFE_INTEGER;
+    const rightDistance = Number.isFinite(rightClosestRank) ? Math.abs(rightClosestRank - payoutResultRank) : Number.MAX_SAFE_INTEGER;
+    if (leftDistance !== rightDistance) return leftDistance - rightDistance;
+    if (leftClosestRank !== rightClosestRank) return leftClosestRank - rightClosestRank;
+    return compareByWheelOrder(left, right);
+  };
+
+  const usePayoutClosenessOrder = currentStage === 'PAYOUT' && Number.isFinite(payoutResultRank);
+  const useBettingOrder = currentStage === 'BETTING' || currentStage === 'RACE_PENDING_RESULT';
+  const payingPlayers = useBettingOrder
+    ? activePlayers
+      .filter((player) => getLeaderboardPosition(player) !== null)
+      .sort(compareByWheelOrder)
+    : usePayoutClosenessOrder
+      ? activePlayers
+        .filter((player) => getLeaderboardPosition(player) !== null)
+        .sort(compareByPayoutCloseness)
+    : activePlayers
+      .filter((player) => getLeaderboardPosition(player) !== null)
+      .sort((left, right) => {
+        const positionDiff = (LEADERBOARD_POSITION_RANK.get(getLeaderboardPosition(left)) ?? Number.MAX_SAFE_INTEGER)
+          - (LEADERBOARD_POSITION_RANK.get(getLeaderboardPosition(right)) ?? Number.MAX_SAFE_INTEGER);
+        if (positionDiff !== 0) return positionDiff;
+        return left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' });
+      });
+  const awaitingPositionPlayers = useBettingOrder
+    ? activePlayers
+      .filter((player) => getLeaderboardPosition(player) === null)
+      .sort(compareByWheelOrder)
+    : usePayoutClosenessOrder
+      ? activePlayers
+        .filter((player) => getLeaderboardPosition(player) === null)
+        .sort(compareByPayoutCloseness)
+    : activePlayers
+      .filter((player) => getLeaderboardPosition(player) === null)
+      .sort((left, right) => left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' }));
+  const sortedSkippedOrFoldedPlayers = useBettingOrder
+    ? skippedOrFoldedPlayers.sort(compareByWheelOrder)
+    : usePayoutClosenessOrder
+      ? skippedOrFoldedPlayers.sort(compareByPayoutCloseness)
+    : skippedOrFoldedPlayers.sort((left, right) => left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' }));
+  const payingSectionLabel = usePayoutClosenessOrder
+    ? `Closest To #${raceResult}`
+    : useBettingOrder
+      ? 'Betting Order'
+      : 'Paying Players';
+  const payingSectionDisplay = `${payingSectionLabel} (${payingPlayers.length})`;
+  const awaitingSectionDisplay = `Awaiting Position (${awaitingPositionPlayers.length})`;
+  const skippedSectionDisplay = `Skipped/Folded (${sortedSkippedOrFoldedPlayers.length})`;
+  const leaderboardPlayerCount = payingPlayers.length + awaitingPositionPlayers.length + skippedOrFoldedPlayers.length;
   const wheelSegmentColors = segments.map((seg) => seg.color ?? '#2a2a4a');
   const entryFeeDisplay = entryFee === 'ALL_IN' ? 'ALL IN' : `$${Number(entryFee).toFixed(2)}`;
   const cascadeActive = !!cascadeSpinData;
@@ -487,9 +783,16 @@ function HostView({ gameState, socket }) {
       : 'THE WHEEL IS SPINNING';
   const hasVoteElement = !!(groupVote || voteResult || positionVote || positionVoteResult);
   const hasWheelElement = WHEEL_STAGES.includes(currentStage);
-  const activeElementType = hasVoteElement ? 'vote' : hasWheelElement ? 'wheel' : null;
+  const payoutWinners = currentStage === 'PAYOUT'
+    ? players.filter((player) => player.paidEntry && !player.folded && player.positions?.includes(raceResult))
+    : [];
+  const payoutWinnerIds = new Set(payoutWinners.map((player) => player.id));
+  const hasPayoutElement = currentStage === 'PAYOUT';
+  const activeElementType = hasVoteElement ? 'vote' : hasWheelElement ? 'wheel' : hasPayoutElement ? 'payout' : null;
   const hasActiveElement = !!activeElementType;
   const leaderboardFocusPlayerId = wheelFocusPlayerId ?? activeTimer?.playerId ?? null;
+  const wheelIsBusy = hasWheelElement && (spinning || cascadeSpinning);
+  const leaderboardAutoScrollEnabled = currentStage !== 'RACE_PENDING_RESULT' && !wheelIsBusy;
 
   useEffect(() => {
     let timeout;
@@ -513,82 +816,69 @@ function HostView({ gameState, socket }) {
     return () => clearTimeout(timeout);
   }, [hasActiveElement]);
 
+  const onLeaderboardWheel = useLeaderboardAutoScroll({
+    containerRef: leaderboardRef,
+    rowRefs,
+    enabled: leaderboardAutoScrollEnabled,
+    focusPlayerId: leaderboardFocusPlayerId,
+    speedPxPerSecond: LEADERBOARD_AUTO_SCROLL_SPEED_PX_PER_SECOND,
+    edgePauseMs: LEADERBOARD_AUTO_SCROLL_PAUSE_MS,
+    focusOverrideMs: LEADERBOARD_FOCUS_OVERRIDE_MS,
+    manualOverrideMs: LEADERBOARD_MANUAL_OVERRIDE_MS,
+    debugReporter: useCallback((payload) => {
+      socket.emit('system-debug-print', {
+        source: 'host-view-leaderboard',
+        algoVersion: 'v2-carry-52',
+        stage: currentStage,
+        ...payload,
+      });
+    }, [socket, currentStage]),
+  });
+
   useEffect(() => {
-    const leaderboardEl = leaderboardRef.current;
-    if (!leaderboardEl) return undefined;
-    if (autoScrollRafRef.current) {
-      cancelAnimationFrame(autoScrollRafRef.current);
-      autoScrollRafRef.current = null;
-    }
-    const maxScroll = Math.max(0, leaderboardEl.scrollHeight - leaderboardEl.clientHeight);
-    if (maxScroll <= 0) return undefined;
-
-    if (leaderboardFocusPlayerId) {
-      const row = rowRefs.current.get(leaderboardFocusPlayerId);
-      if (row) {
-        const target = row.offsetTop - (leaderboardEl.clientHeight / 2) + (row.clientHeight / 2);
-        leaderboardEl.scrollTo({ top: Math.max(0, Math.min(maxScroll, target)), behavior: 'smooth' });
-      }
-      return undefined;
-    }
-
-    autoScrollLastTsRef.current = 0;
-    const speedPxPerSecond = 16;
-    const tick = (ts) => {
+    const intervalId = setInterval(() => {
       const el = leaderboardRef.current;
-      if (!el) return;
-      if (!autoScrollLastTsRef.current) autoScrollLastTsRef.current = ts;
-      const dt = (ts - autoScrollLastTsRef.current) / 1000;
-      autoScrollLastTsRef.current = ts;
-      const max = Math.max(0, el.scrollHeight - el.clientHeight);
-      if (max <= 0) return;
-      let next = el.scrollTop + (autoScrollDirectionRef.current * speedPxPerSecond * dt);
-      if (next >= max) {
-        next = max;
-        autoScrollDirectionRef.current = -1;
-      } else if (next <= 0) {
-        next = 0;
-        autoScrollDirectionRef.current = 1;
-      }
-      el.scrollTop = next;
-      autoScrollRafRef.current = requestAnimationFrame(tick);
-    };
-    autoScrollRafRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (autoScrollRafRef.current) {
-        cancelAnimationFrame(autoScrollRafRef.current);
-        autoScrollRafRef.current = null;
-      }
-    };
-  }, [leaderboardFocusPlayerId, leaderboardPlayerCount]);
+      const maxScroll = el ? Math.max(0, el.scrollHeight - el.clientHeight) : 0;
+      socket.emit('system-debug-print', {
+        source: 'host-view-heartbeat',
+        algoVersion: 'v2-carry-52',
+        stage: currentStage,
+        phase: 'heartbeat',
+        enabled: leaderboardAutoScrollEnabled,
+        focusPlayerId: leaderboardFocusPlayerId ?? null,
+        scrollTop: Number(el?.scrollTop ?? 0),
+        maxScroll,
+        direction: 1,
+        edgePauseMsRemaining: 0,
+        suspendMsRemaining: 0,
+      });
+    }, 1000);
 
-  const onLeaderboardWheel = useCallback((e) => {
-    const el = leaderboardRef.current;
-    if (!el) return;
-    const max = Math.max(0, el.scrollHeight - el.clientHeight);
-    if (max <= 0) {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
-    const atTop = el.scrollTop <= 0;
-    const atBottom = el.scrollTop >= max - 1;
-    if ((e.deltaY < 0 && atTop) || (e.deltaY > 0 && atBottom)) {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
-    const next = Math.max(0, Math.min(max, el.scrollTop + e.deltaY));
-    if (next !== el.scrollTop) {
-      e.preventDefault();
-      el.scrollTop = next;
-    }
-  }, []);
+    return () => clearInterval(intervalId);
+  }, [socket, currentStage, leaderboardAutoScrollEnabled, leaderboardFocusPlayerId]);
 
   const renderLeaderboardRow = (player, index, { dimmed = false, showRank = true } = {}) => {
     const isOnClock = activeTimer?.playerId === player.id;
     const timerUrgent = isOnClock && activeTimer.timeLeft <= 10;
     const isWheelFocus = WHEEL_STAGES.includes(currentStage) && wheelFocusPlayerId === player.id;
+    const tokenSpentThisRace = isTokenSpentThisRace(player);
+    const tokenLabel = tokenSpentThisRace
+      ? (player.skippedRace ? 'SKIPPED' : 'FOLDED')
+      : (!player.skipFoldTokenAvailable ? 'NO TOKEN' : null);
+    const rowDimmed = dimmed || tokenSpentThisRace;
+    const isPayoutWinner = currentStage === 'PAYOUT' && payoutWinnerIds.has(player.id);
+    const payoutTextColor = '#161204';
+    const normalBackground = isOnClock
+      ? (timerUrgent ? '#2a0000' : '#001a0a')
+      : isWheelFocus
+        ? '#2a2410'
+        : player.balance <= 0
+          ? '#1a0000'
+          : rowDimmed
+            ? '#161616'
+            : index % 2 === 0
+              ? '#151515'
+              : '#1c1c1c';
 
     return (
       <div
@@ -599,40 +889,36 @@ function HostView({ gameState, socket }) {
         }}
         style={{
           ...styles.lbRow,
-          opacity: player.balance <= 0 ? 0.4 : dimmed ? 0.7 : 1,
-          filter: dimmed ? 'grayscale(0.45)' : 'none',
-          background: isOnClock
-            ? (timerUrgent ? '#2a0000' : '#001a0a')
-            : isWheelFocus
-              ? '#2a2410'
-              : player.balance <= 0
-                ? '#1a0000'
-                : dimmed
-                  ? '#161616'
-                  : index % 2 === 0
-                    ? '#151515'
-                    : '#1c1c1c',
-          border: isOnClock
-            ? `1px solid ${timerUrgent ? '#e74c3c' : '#2ecc71'}`
-            : isWheelFocus
-              ? '1px solid #f0c040'
-              : dimmed
-                ? '1px solid #2b2b2b'
-                : '1px solid transparent',
+          opacity: player.balance <= 0 ? 0.4 : rowDimmed ? 0.7 : 1,
+          filter: rowDimmed ? 'grayscale(0.45)' : 'none',
+          background: isPayoutWinner
+            ? 'linear-gradient(90deg, rgba(133,95,30,0.95) 0%, rgba(199,156,53,0.96) 52%, rgba(133,95,30,0.95) 100%)'
+            : normalBackground,
+          border: isPayoutWinner
+            ? '1px solid #f2d57a'
+            : isOnClock
+              ? `1px solid ${timerUrgent ? '#e74c3c' : '#2ecc71'}`
+              : isWheelFocus
+                ? '1px solid #f0c040'
+                : rowDimmed
+                  ? '1px solid #2b2b2b'
+                  : '1px solid transparent',
+          boxShadow: isPayoutWinner ? '0 0 18px rgba(240, 192, 64, 0.45), inset 0 0 14px rgba(255, 220, 120, 0.25)' : 'none',
+              color: isPayoutWinner ? payoutTextColor : undefined,
         }}
       >
-        <span style={styles.lbRank}>{showRank ? `#${index + 1}` : '...'}</span>
-        {player.profileImageUrl ? <img src={player.profileImageUrl} alt="" style={styles.lbAvatar} /> : <div style={{ ...styles.lbAvatarPlaceholder, background: getFavoriteColor(player), borderColor: getFavoriteColor(player) }}>{player.displayName?.[0]?.toUpperCase() ?? '?'}</div>}
-        <span style={styles.lbName}>{player.displayName}</span>
+            <span style={{ ...styles.lbRank, color: isPayoutWinner ? payoutTextColor : styles.lbRank.color }}>{showRank ? `#${index + 1}` : '...'}</span>
+        <Avatar player={player} size={40} borderColor={getFavoriteColor(player)} getFavoriteColor={getFavoriteColor} />
+            <span style={{ ...styles.lbName, color: isPayoutWinner ? payoutTextColor : undefined }}>{player.displayName}</span>
         {isWheelFocus && !isOnClock && <span style={styles.lbFocusBadge}>FOCUS</span>}
         {isOnClock && (
           <span style={{ ...styles.lbTimerBadge, color: timerUrgent ? '#e74c3c' : '#2ecc71', borderColor: timerUrgent ? '#e74c3c' : '#2ecc71' }}>
             {activeTimer.timeLeft}s
           </span>
         )}
-        <MoneyDelta value={player.balance}><MoneyTicker value={player.balance} prefix="$" style={styles.lbBalance} /></MoneyDelta>
-        {player.positions?.length > 0 && <span style={styles.lbPositions}>[{player.positions.join(', ')}]</span>}
-        {!player.skipFoldTokenAvailable && <span style={styles.lbNoToken}>NO TOKEN</span>}
+            <MoneyDelta value={player.balance}><MoneyTicker value={player.balance} prefix="$" style={{ ...styles.lbBalance, color: isPayoutWinner ? payoutTextColor : styles.lbBalance.color }} /></MoneyDelta>
+            {player.positions?.length > 0 && <span style={{ ...styles.lbPositions, color: isPayoutWinner ? payoutTextColor : styles.lbPositions.color }}>[{player.positions.join(', ')}]</span>}
+            {tokenLabel && <span style={{ ...styles.lbNoToken, background: isPayoutWinner ? '#3e3210' : styles.lbNoToken.background, color: isPayoutWinner ? '#121212' : styles.lbNoToken.color }}>{tokenLabel}</span>}
       </div>
     );
   };
@@ -664,6 +950,10 @@ function HostView({ gameState, socket }) {
                       positionVoteTimeLeft={positionVoteTimeLeft}
                     />
                   </div>
+                ) : activeElementType === 'payout' ? (
+                  <div style={styles.voteActiveWrap}>
+                    <PayoutActiveElement winners={payoutWinners} raceResult={raceResult} getFavoriteColor={getFavoriteColor} />
+                  </div>
                 ) : (
                 <div style={styles.wheelPanel}>
                   {(cascadeActive || segments.length > 0) ? (
@@ -694,13 +984,14 @@ function HostView({ gameState, socket }) {
                                 transition: 'opacity 500ms ease, transform 500ms cubic-bezier(0.34, 1.56, 0.64, 1)',
                                 pointerEvents: 'none',
                               }}>
-                                {pickerPlayer.profileImageUrl ? (
-                                  <img src={pickerPlayer.profileImageUrl} alt={pickerPlayer.displayName} style={{ width: 315, height: 315, borderRadius: '50%', objectFit: 'cover', border: '4px solid #f0c040', boxShadow: '0 0 40px rgba(240,192,64,0.8)' }} />
-                                ) : (
-                                  <div style={{ width: 315, height: 315, borderRadius: '50%', background: getFavoriteColor(pickerPlayer), border: '4px solid #f0c040', boxShadow: '0 0 40px rgba(240,192,64,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 120, fontWeight: 'bold', color: '#f0c040' }}>
-                                    {pickerPlayer.displayName?.[0]?.toUpperCase() ?? '?'}
-                                  </div>
-                                )}
+                                <Avatar
+                                  player={pickerPlayer}
+                                  size={315}
+                                  borderWidth={4}
+                                  borderColor="#f0c040"
+                                  style={{ boxShadow: '0 0 40px rgba(240,192,64,0.8)' }}
+                                  getFavoriteColor={getFavoriteColor}
+                                />
                               </div>
                             )}
                           </>
@@ -764,12 +1055,23 @@ function HostView({ gameState, socket }) {
                     <div style={styles.positionGrid}>
                       {Array.from({ length: 13 }, (_, i) => {
                         const slot = i < 12 ? String(i + 1) : 'DNF';
-                        const ownerId = positionDraft.occupiedPositions?.[slot];
-                        const ownerName = ownerId ? players.find((p) => p.id === ownerId)?.displayName : null;
+                        const slotOwners = players.filter((player) => Array.isArray(player.positions) && player.positions.includes(slot));
                         return (
-                          <div key={slot} style={{ ...styles.positionCell, background: ownerId ? '#1e3a2f' : '#1a1a1a' }}>
+                          <div key={slot} style={{ ...styles.positionCell, background: slotOwners.length > 0 ? '#1e3a2f' : '#1a1a1a' }}>
                             <div style={styles.positionSlot}>{slot}</div>
-                            <div style={styles.positionOwner}>{ownerName ?? '—'}</div>
+                            <div style={styles.positionOwner}>
+                              {slotOwners.length > 0 ? (
+                                <StackedAvatars
+                                  players={slotOwners}
+                                  size={32}
+                                  maxDisplay={3}
+                                  stackOffset={-10}
+                                  getFavoriteColor={getFavoriteColor}
+                                />
+                              ) : (
+                                <div style={{ color: '#666', fontSize: 12 }}>—</div>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
@@ -782,19 +1084,41 @@ function HostView({ gameState, socket }) {
 
             <div
               ref={leaderboardRef}
+              className="host-leaderboard-scroll"
               style={{ ...styles.leaderboard, ...(!hasActiveElement && leaderboardExpanded ? styles.leaderboardFullWidth : null) }}
               onWheel={onLeaderboardWheel}
             >
-              <div style={styles.lbTitle}>PLAYERS</div>
-              {sortedPlayers.map((player, index) => renderLeaderboardRow(player, index))}
-              {unsortedPlayers.length > 0 && (
+              <div ref={lbStickyHeaderRef} style={styles.lbStickyHeader}>
+                <div style={styles.lbTitle}>LEADEROARD</div>
+              </div>
+              {payingPlayers.length > 0 && (
                 <>
-                  <div style={styles.lbDivider}>
+                  <div style={{ ...styles.lbDivider, top: lbHeaderHeight }}>
                     <span style={styles.lbDividerLine} />
-                    <span style={styles.lbDividerLabel}>Awaiting Position</span>
+                    <span style={styles.lbDividerLabel}>{payingSectionDisplay}</span>
                     <span style={styles.lbDividerLine} />
                   </div>
-                  {unsortedPlayers.map((player, index) => renderLeaderboardRow(player, index, { dimmed: true, showRank: false }))}
+                  {payingPlayers.map((player, index) => renderLeaderboardRow(player, index))}
+                </>
+              )}
+              {awaitingPositionPlayers.length > 0 && (
+                <>
+                  <div style={{ ...styles.lbDivider, top: lbHeaderHeight }}>
+                    <span style={styles.lbDividerLine} />
+                    <span style={styles.lbDividerLabel}>{awaitingSectionDisplay}</span>
+                    <span style={styles.lbDividerLine} />
+                  </div>
+                  {awaitingPositionPlayers.map((player, index) => renderLeaderboardRow(player, index, { dimmed: true, showRank: false }))}
+                </>
+              )}
+              {sortedSkippedOrFoldedPlayers.length > 0 && (
+                <>
+                  <div style={{ ...styles.lbDivider, top: lbHeaderHeight }}>
+                    <span style={styles.lbDividerLine} />
+                    <span style={styles.lbDividerLabel}>{skippedSectionDisplay}</span>
+                    <span style={styles.lbDividerLine} />
+                  </div>
+                  {sortedSkippedOrFoldedPlayers.map((player, index) => renderLeaderboardRow(player, index, { dimmed: true, showRank: false }))}
                 </>
               )}
             </div>
@@ -823,7 +1147,7 @@ const styles = {
     alignItems: 'center',
     gap: 32,
     padding: '12px 24px',
-    background: '#111',
+    background: `linear-gradient(90deg, #111 0%, #111 calc(100% - ${LEADERBOARD_PANEL_WIDTH}px), #101010 calc(100% - ${LEADERBOARD_PANEL_WIDTH}px), #101010 100%)`,
     borderBottom: '2px solid #333',
     flexShrink: 0,
   },
@@ -835,21 +1159,25 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     flex: 1,
+    minHeight: 0,
     overflow: 'hidden',
   },
   topRowSlide: {
     flex: 1,
+    minHeight: 0,
     overflow: 'hidden',
   },
   topRow: {
     display: 'flex',
     gap: 0,
     height: '100%',
+    minHeight: 0,
     overflow: 'hidden',
   },
   activePanel: {
     flex: 1,
     minWidth: 0,
+    minHeight: 0,
     borderRight: '1px solid #222',
     overflow: 'hidden',
     display: 'flex',
@@ -938,12 +1266,25 @@ const styles = {
     border: '1px solid #333',
   },
   positionSlot: { fontSize: 13, fontWeight: 'bold', color: '#f0c040' },
-  positionOwner: { fontSize: 11, color: '#ccc', marginTop: 2, wordBreak: 'break-word' },
+  positionOwner: {
+    fontSize: 11,
+    color: '#ccc',
+    marginTop: 4,
+    minHeight: 34,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    wordBreak: 'break-word',
+  },
   leaderboard: {
-    width: 460,
+    width: LEADERBOARD_PANEL_WIDTH,
     flexShrink: 0,
-    padding: '20px 18px',
+    minHeight: 0,
+    height: '100%',
+    padding: '0 18px 20px',
     overflowY: 'auto',
+    scrollbarWidth: 'none',
+    msOverflowStyle: 'none',
     display: 'flex',
     flexDirection: 'column',
     gap: 4,
@@ -959,13 +1300,27 @@ const styles = {
     letterSpacing: 2,
     color: '#f0c040',
     textTransform: 'uppercase',
-    marginBottom: 8,
+    marginBottom: 6,
+  },
+  lbStickyHeader: {
+    position: 'sticky',
+    top: 0,
+    zIndex: 6,
+    background: 'linear-gradient(180deg, rgba(16,16,16,0.97) 0%, rgba(16,16,16,0.97) 100%)',
+    backdropFilter: 'blur(2px)',
+    padding: '14px 18px 8px',
+    margin: '0 -18px 0',
   },
   lbDivider: {
+    position: 'sticky',
+    top: 0,
+    zIndex: 5,
+    background: 'rgba(16,16,16,0.97)',
     display: 'flex',
     alignItems: 'center',
     gap: 10,
-    margin: '10px 0 6px',
+    margin: '0 -18px 6px',
+    padding: '6px 18px',
   },
   lbDividerLine: {
     flex: 1,
@@ -1111,6 +1466,87 @@ const styles = {
     color: '#2ecc71',
     textAlign: 'center',
     boxShadow: '0 0 30px rgba(46,204,113,0.4)',
+  },
+  payoutPanel: {
+    width: '100%',
+    maxWidth: 720,
+    background: 'linear-gradient(180deg, rgba(35,28,12,0.96) 0%, rgba(18,14,8,0.98) 100%)',
+    border: '2px solid #cba44a',
+    borderRadius: 14,
+    padding: '22px 24px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
+    boxShadow: '0 0 38px rgba(240,192,64,0.34)',
+    alignItems: 'center',
+    textAlign: 'center',
+  },
+  payoutTitle: {
+    fontSize: 30,
+    fontWeight: 'bold',
+    color: '#f2d57a',
+    letterSpacing: 1.8,
+    textTransform: 'uppercase',
+    textShadow: '0 0 18px rgba(240,192,64,0.45)',
+  },
+  payoutSubtitle: {
+    fontSize: 15,
+    color: '#e6d7b0',
+  },
+  payoutWinnersRow: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'stretch',
+    justifyContent: 'center',
+    gap: 14,
+    flexWrap: 'wrap',
+  },
+  payoutWinnerTile: {
+    minWidth: 140,
+    maxWidth: 180,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 8,
+    padding: '10px 10px 8px',
+    borderRadius: 10,
+    background: 'rgba(255, 255, 255, 0.05)',
+    border: '1px solid rgba(242, 213, 122, 0.3)',
+  },
+  payoutWinnerAvatar: {
+    width: 84,
+    height: 84,
+    borderRadius: '50%',
+    objectFit: 'cover',
+    border: '3px solid #f2d57a',
+    boxShadow: '0 0 16px rgba(240, 192, 64, 0.55)',
+  },
+  payoutWinnerAvatarFallback: {
+    width: 84,
+    height: 84,
+    borderRadius: '50%',
+    border: '3px solid #f2d57a',
+    color: '#fff3cc',
+    boxShadow: '0 0 16px rgba(240, 192, 64, 0.55)',
+    fontSize: 13,
+    fontWeight: 'bold',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    textAlign: 'center',
+    padding: '0 8px',
+    lineHeight: 1.1,
+  },
+  payoutWinnerName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#f5e6bc',
+  },
+  payoutOverflowText: {
+    fontSize: 13,
+    color: '#d8c58f',
+    lineHeight: 1.3,
+    maxWidth: '100%',
   },
   cascadeChainPanel: {
     background: '#1a0d1a',

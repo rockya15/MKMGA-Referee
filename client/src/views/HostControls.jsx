@@ -153,13 +153,19 @@ function HostControls({ gameState, socket }) {
   const [botAddCount, setBotAddCount] = useState('4');
   const [botAutoPick, setBotAutoPick] = useState(true);
   const [botDelayMs, setBotDelayMs] = useState('1000');
+  const [botVariableTimeoutDelay, setBotVariableTimeoutDelay] = useState(false);
+  const [botTimeoutDelayMinMs, setBotTimeoutDelayMinMs] = useState('500');
+  const [botTimeoutDelayMaxMs, setBotTimeoutDelayMaxMs] = useState('5000');
   const [botPreBetMode, setBotPreBetMode] = useState('AUTO');
   const [botPositionMode, setBotPositionMode] = useState('AUTO');
   const [botBettingMode, setBotBettingMode] = useState('AUTO');
   const [botCascadeMode, setBotCascadeMode] = useState('AUTO');
   const [botVoteMode, setBotVoteMode] = useState('AUTO');
+  const [playerPanelOpen, setPlayerPanelOpen] = useState(true);
   const [debugPanelOpen, setDebugPanelOpen] = useState(false);
+  const [debugSystemOpen, setDebugSystemOpen] = useState(false);
   const [debugBotsOpen, setDebugBotsOpen] = useState(false);
+  const [systemDebugPrints, setSystemDebugPrints] = useState([]);
   const [errorMsg, setErrorMsg] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -169,13 +175,44 @@ function HostControls({ gameState, socket }) {
       setErrorMsg(typeof msg === 'string' ? msg : JSON.stringify(msg));
       setTimeout(() => setErrorMsg(null), 4000);
     };
+    const onSystemDebugSnapshot = (items) => {
+      if (!Array.isArray(items)) return;
+      setSystemDebugPrints(items.slice(-120));
+    };
+    const onSystemDebugPrint = (entry) => {
+      if (!entry || typeof entry !== 'object') return;
+      setSystemDebugPrints((prev) => [...prev, entry].slice(-120));
+    };
     socket.on('error', onError);
-    return () => socket.off('error', onError);
+    socket.on('system-debug-snapshot', onSystemDebugSnapshot);
+    socket.on('system-debug-print', onSystemDebugPrint);
+    return () => {
+      socket.off('error', onError);
+      socket.off('system-debug-snapshot', onSystemDebugSnapshot);
+      socket.off('system-debug-print', onSystemDebugPrint);
+    };
   }, [socket]);
 
   const handleAction = (action, data = {}) => {
     setErrorMsg(null);
     socket.emit('host-action', { action, ...data });
+  };
+
+  const handleSaveRaceData = () => {
+    setErrorMsg(null);
+    socket.emit('host-action', { action: 'save-race-data' }, (response) => {
+      if (response?.error) {
+        setErrorMsg(response.error);
+        setTimeout(() => setErrorMsg(null), 4000);
+        return;
+      }
+      if (response?.archiveDir) {
+        setSuccessMsg(`Race data saved: ${response.archiveDir}`);
+      } else {
+        setSuccessMsg('Race data saved.');
+      }
+      setTimeout(() => setSuccessMsg(null), 5000);
+    });
   };
 
   const { currentStage, players, pot, raceNumber, entryFee, positionDraft, wheelOrder } = gameState;
@@ -198,6 +235,9 @@ function HostControls({ gameState, socket }) {
     if (!cfg) return;
     setBotAutoPick(Boolean(cfg.autoPick));
     setBotDelayMs(String(cfg.decisionDelayMs ?? 1000));
+    setBotVariableTimeoutDelay(Boolean(cfg.variableTimeoutDelay));
+    setBotTimeoutDelayMinMs(String(cfg.timeoutDelayMinMs ?? 500));
+    setBotTimeoutDelayMaxMs(String(cfg.timeoutDelayMaxMs ?? 5000));
     setBotPreBetMode(cfg.preBetMode ?? 'AUTO');
     setBotPositionMode(cfg.positionMode ?? 'AUTO');
     setBotBettingMode(cfg.bettingMode ?? 'AUTO');
@@ -215,6 +255,14 @@ function HostControls({ gameState, socket }) {
 
       {errorMsg && <div style={styles.errorBanner}>{errorMsg}</div>}
       {successMsg && <div style={styles.successBanner}>{successMsg}</div>}
+
+      <div style={styles.section}>
+        <div style={styles.sectionTitle}>Data Archive</div>
+        <div style={styles.hint}>Save a permanent copy of the current race/game state to a new timestamped folder.</div>
+        <button style={styles.btn} onClick={handleSaveRaceData}>
+          Save Current Race Data
+        </button>
+      </div>
 
       {/* ── LOBBY ── */}
       {currentStage === 'LOBBY' && !gameState.hostSettings.lobbyOpen && (
@@ -364,20 +412,31 @@ function HostControls({ gameState, socket }) {
 
       {/* ── PLAYER GRID ── */}
       <div style={styles.section}>
-        <div style={styles.sectionTitle}>Players ({players.length})</div>
-        {players.length === 0 && <div style={styles.hint}>No players yet.</div>}
-        <div style={styles.playerGrid}>
-          {players.map((p) => (
-            <PlayerCard
-              key={p.id}
-              p={p}
-              gameState={gameState}
-              socket={socket}
-              onError={(msg) => setErrorMsg(msg)}
-              onSuccess={(msg) => { setSuccessMsg(msg); setTimeout(() => setSuccessMsg(null), 3000); }}
-            />
-          ))}
-        </div>
+        <button
+          style={styles.panelToggleBtn}
+          onClick={() => setPlayerPanelOpen((v) => !v)}
+        >
+          <span style={styles.sectionTitle}>Players ({players.length})</span>
+          <span style={styles.panelToggleIcon}>{playerPanelOpen ? '▾' : '▸'}</span>
+        </button>
+
+        {playerPanelOpen && (
+          <>
+            {players.length === 0 && <div style={styles.hint}>No players yet.</div>}
+            <div style={styles.playerGrid}>
+              {players.map((p) => (
+                <PlayerCard
+                  key={p.id}
+                  p={p}
+                  gameState={gameState}
+                  socket={socket}
+                  onError={(msg) => setErrorMsg(msg)}
+                  onSuccess={(msg) => { setSuccessMsg(msg); setTimeout(() => setSuccessMsg(null), 3000); }}
+                />
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       {/* ── DEBUG PANEL ── */}
@@ -392,6 +451,31 @@ function HostControls({ gameState, socket }) {
 
         {debugPanelOpen && (
           <div style={styles.debugPanelBody}>
+            <button
+              style={styles.subPanelToggleBtn}
+              onClick={() => setDebugSystemOpen((v) => !v)}
+            >
+              <span style={styles.subPanelTitle}>System Debug Prints</span>
+              <span style={styles.panelToggleIcon}>{debugSystemOpen ? '▾' : '▸'}</span>
+            </button>
+
+            {debugSystemOpen && (
+              <>
+                <div style={styles.hint}>Latest leaderboard telemetry from host view ({systemDebugPrints.length} lines)</div>
+                <div style={styles.debugPrintBox}>
+                  {systemDebugPrints.length === 0 ? (
+                    <div style={styles.debugPrintRow}>No debug prints yet. Open host view and wait a second.</div>
+                  ) : (
+                    systemDebugPrints.map((entry, idx) => (
+                      <div key={`${entry.at ?? 't'}-${idx}`} style={styles.debugPrintRow}>
+                        [{entry.at?.slice(11, 19) ?? '--:--:--'}] {entry.source ?? 'unknown'} | v={entry.algoVersion ?? '-'} | stage={entry.stage ?? ''} | phase={entry.phase ?? ''} | enabled={String(Boolean(entry.enabled))} | top={Number(entry.scrollTop ?? 0).toFixed(1)} | max={Number(entry.maxScroll ?? 0).toFixed(1)} | dir={entry.direction === -1 ? 'up' : 'down'} | focus={entry.focusPlayerId ?? '-'} | pause={entry.edgePauseMsRemaining ?? 0}ms | suspend={entry.suspendMsRemaining ?? 0}ms
+                      </div>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
+
             <button
               style={styles.subPanelToggleBtn}
               onClick={() => setDebugBotsOpen((v) => !v)}
@@ -435,6 +519,20 @@ function HostControls({ gameState, socket }) {
                 <div style={styles.row}>
                   <label style={styles.label}>Decision Delay (ms)</label>
                   <input style={styles.inputWide} type="number" min="0" step="100" value={botDelayMs} onChange={(e) => setBotDelayMs(e.target.value)} />
+                </div>
+
+                <label style={styles.checkLabelInline}>
+                  <input type="checkbox" checked={botVariableTimeoutDelay} onChange={(e) => setBotVariableTimeoutDelay(e.target.checked)} />
+                  Use variable delay when timeout clocks are active
+                </label>
+
+                <div style={styles.rowWrap}>
+                  <div style={styles.row}>
+                    <label style={styles.label}>Timeout Delay Min (ms)</label>
+                    <input style={styles.input} type="number" min="0" step="100" value={botTimeoutDelayMinMs} onChange={(e) => setBotTimeoutDelayMinMs(e.target.value)} />
+                    <label style={styles.labelTight}>Max (ms)</label>
+                    <input style={styles.input} type="number" min="0" step="100" value={botTimeoutDelayMaxMs} onChange={(e) => setBotTimeoutDelayMaxMs(e.target.value)} />
+                  </div>
                 </div>
 
                 <div style={styles.selectGrid}>
@@ -486,6 +584,9 @@ function HostControls({ gameState, socket }) {
                       settings: {
                         autoPick: botAutoPick,
                         decisionDelayMs: Number(botDelayMs),
+                        variableTimeoutDelay: botVariableTimeoutDelay,
+                        timeoutDelayMinMs: Number(botTimeoutDelayMinMs),
+                        timeoutDelayMaxMs: Number(botTimeoutDelayMaxMs),
                         preBetMode: botPreBetMode,
                         positionMode: botPositionMode,
                         bettingMode: botBettingMode,
@@ -637,6 +738,25 @@ const styles = {
     color: '#f0c040',
     textTransform: 'uppercase',
     letterSpacing: 1,
+  },
+  debugPrintBox: {
+    background: '#0c0f14',
+    border: '1px solid #243140',
+    borderRadius: 6,
+    maxHeight: 220,
+    overflowY: 'auto',
+    padding: 8,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+  },
+  debugPrintRow: {
+    fontFamily: "Consolas, 'Courier New', monospace",
+    fontSize: 11,
+    lineHeight: 1.35,
+    color: '#9fb3c8',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
   },
   hint: { fontSize: 13, color: '#aaa' },
   row: { display: 'flex', alignItems: 'center', gap: 10 },
