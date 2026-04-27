@@ -1,20 +1,23 @@
 const ALL_POSITIONS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', 'DNF'];
 
 class TimerManager {
-  constructor(io, gameState, bettingEngine, onVoteResolved, onPositionTimeout) {
+  constructor(io, gameState, bettingEngine, onVoteResolved, onPositionTimeout, onCascadeResponseTimeout) {
     this.io = io;
     this.gameState = gameState;
     this.bettingEngine = bettingEngine;
     this.onVoteResolved = onVoteResolved || null;
     this.onPositionTimeout = onPositionTimeout || null;
+    this.onCascadeResponseTimeout = onCascadeResponseTimeout || null;
     this.currentTimer = null;
     this.timeoutPlayer = null;
-    this.timerMode = 'betting'; // 'betting' | 'position'
+    this.timerMode = 'betting'; // 'betting' | 'position' | 'cascade-response'
     this.timeLeft = 0;
     this.voteSession = null;
     this.voteTickInterval = null;
     this.positionVoteSession = null;
     this.positionVoteTickInterval = null;
+    this.cascadeResponseVoteSession = null;
+    this.cascadeResponseVoteTickInterval = null;
   }
 
   // Start a countdown timer for a player.
@@ -83,6 +86,11 @@ class TimerManager {
       clearTimeout(this.positionVoteSession.voteTimer);
       this.positionVoteSession = null;
     }
+    this._stopCascadeResponseVoteTick();
+    if (this.cascadeResponseVoteSession) {
+      clearTimeout(this.cascadeResponseVoteSession.voteTimer);
+      this.cascadeResponseVoteSession = null;
+    }
     this.timeoutPlayer = null;
     this.timeLeft = 0;
     this.io.emit('timer-clear');
@@ -93,6 +101,8 @@ class TimerManager {
     this._stopInterval();
     if (this.timerMode === 'position') {
       this.handlePositionTimeout();
+    } else if (this.timerMode === 'cascade-response') {
+      this.handleCascadeResponseTimeout();
     } else {
       this.startGroupVote();
     }
@@ -263,6 +273,99 @@ class TimerManager {
 
     if (this.onPositionTimeout) {
       this.onPositionTimeout(playerId, assigned);
+    }
+  }
+
+  // ── Cascade-response timeout & vote ──────────────────────────────────────
+  handleCascadeResponseTimeout() {
+    console.log(`[TimerManager] cascade-response TIMEOUT — player=${this.timeoutPlayer}`);
+    this.io.emit('timer-clear');
+    this.startCascadeResponseGroupVote();
+  }
+
+  startCascadeResponseGroupVote() {
+    const playerId = this.timeoutPlayer;
+    const voterIds = this.gameState.players
+      .filter((p) => p.paidEntry && p.id !== playerId)
+      .map((p) => p.id);
+
+    let voteTimeLeft = 30;
+
+    this.cascadeResponseVoteSession = {
+      timedOutPlayer: playerId,
+      votes: {},
+      voterIds,
+      voteTimer: setTimeout(() => {
+        this._stopCascadeResponseVoteTick();
+        this.resolveCascadeResponseVote();
+      }, 30000),
+    };
+
+    console.log(`[TimerManager] cascade-response-vote-start — player=${playerId} voters=${voterIds.length}`);
+    this.io.emit('cascade-response-vote-start', {
+      timedOutPlayer: playerId,
+      voters: voterIds,
+      endsInSeconds: voteTimeLeft,
+    });
+
+    this.cascadeResponseVoteTickInterval = setInterval(() => {
+      voteTimeLeft--;
+      this.io.emit('cascade-response-vote-timer-update', { timeLeft: voteTimeLeft });
+      if (voteTimeLeft <= 0) {
+        this._stopCascadeResponseVoteTick();
+      }
+    }, 1000);
+  }
+
+  _stopCascadeResponseVoteTick() {
+    if (this.cascadeResponseVoteTickInterval) {
+      clearInterval(this.cascadeResponseVoteTickInterval);
+      this.cascadeResponseVoteTickInterval = null;
+    }
+  }
+
+  submitCascadeResponseVote(voterId, choice) {
+    if (!this.cascadeResponseVoteSession) return { error: 'No active cascade response vote.' };
+    if (!this.cascadeResponseVoteSession.voterIds.includes(voterId)) return { error: 'Not eligible to vote.' };
+    if (choice !== 'cascade' && choice !== 'accept') return { error: 'Invalid vote choice.' };
+
+    this.cascadeResponseVoteSession.votes[voterId] = choice;
+    const cascadeVotes = Object.values(this.cascadeResponseVoteSession.votes).filter((v) => v === 'cascade').length;
+    const acceptVotes = Object.values(this.cascadeResponseVoteSession.votes).filter((v) => v === 'accept').length;
+
+    this.io.emit('cascade-response-vote-update', {
+      cascadeVotes,
+      acceptVotes,
+      totalVotes: Object.keys(this.cascadeResponseVoteSession.votes).length,
+      totalVoters: this.cascadeResponseVoteSession.voterIds.length,
+    });
+
+    if (Object.keys(this.cascadeResponseVoteSession.votes).length >= this.cascadeResponseVoteSession.voterIds.length) {
+      this._stopCascadeResponseVoteTick();
+      clearTimeout(this.cascadeResponseVoteSession.voteTimer);
+      this.resolveCascadeResponseVote();
+    }
+
+    return { success: true };
+  }
+
+  resolveCascadeResponseVote() {
+    if (!this.cascadeResponseVoteSession) return;
+    const { timedOutPlayer, votes } = this.cascadeResponseVoteSession;
+    const cascadeVotes = Object.values(votes).filter((v) => v === 'cascade').length;
+    const acceptVotes = Object.values(votes).filter((v) => v === 'accept').length;
+    // cascade wins on tie (gives displaced player the benefit of the doubt)
+    const doCascade = cascadeVotes >= acceptVotes;
+
+    console.log(`[TimerManager] cascade-response-vote-result — player=${timedOutPlayer} doCascade=${doCascade} (${cascadeVotes} cascade / ${acceptVotes} accept)`);
+    this.io.emit('cascade-response-vote-result', { timedOutPlayer, doCascade, cascadeVotes, acceptVotes });
+
+    this.cascadeResponseVoteSession = null;
+    this.timeoutPlayer = null;
+    this.timeLeft = 0;
+
+    if (this.onCascadeResponseTimeout) {
+      this.onCascadeResponseTimeout(timedOutPlayer, doCascade);
     }
   }
 

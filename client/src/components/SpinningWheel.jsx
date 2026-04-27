@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
 // Duration of the spin animation in ms
-const SPIN_DURATION = 3500;
+const SPIN_DURATION = 6000;
 // Full rotations to add for realism
-const FULL_ROTATIONS = 5;
+const FULL_ROTATIONS = 8;
 
 function getSegmentColors(count) {
   const palette = [

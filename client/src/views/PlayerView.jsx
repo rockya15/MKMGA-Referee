@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import MoneyTicker from '../components/MoneyTicker';
 
 const ALL_POSITIONS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', 'DNF'];
 const GENTLE_DNF_SLOTS = [1, 2, 4, 8, 13];
@@ -9,6 +10,7 @@ function PlayerView({ gameState, socket }) {
   const [serverError, setServerError] = useState(null);
   const [pendingDnf, setPendingDnf] = useState(false);
   const [showCascadeHelp, setShowCascadeHelp] = useState(false);
+  const [showDisplacedCascadeHelp, setShowDisplacedCascadeHelp] = useState(false);
   const [raiseTotal, setRaiseTotal] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
   const storedCreds = useRef(null);
@@ -25,14 +27,15 @@ function PlayerView({ gameState, socket }) {
   const [positionVoteTimeLeft, setPositionVoteTimeLeft] = useState(0);
   const [positionVoteCounts, setPositionVoteCounts] = useState({});
   const [myPositionVote, setMyPositionVote] = useState(null);
-  const [moneyPulse, setMoneyPulse] = useState({
-    balance: false,
-    pot: false,
-    contributed: false,
-    roundBet: false,
-    currentBet: false,
-  });
   const [positionPulseKeys, setPositionPulseKeys] = useState({});
+  const [maxBetFlash, setMaxBetFlash] = useState(false);
+  const maxBetFlashTimeoutRef = useRef(null);
+
+  // ── Cascade-response vote state ──────────────────────────────────────────────
+  const [cascadeResponseVote, setCascadeResponseVote] = useState(null);
+  const [cascadeResponseVoteTimeLeft, setCascadeResponseVoteTimeLeft] = useState(0);
+  const [cascadeResponseVoteCounts, setCascadeResponseVoteCounts] = useState({ cascadeVotes: 0, acceptVotes: 0 });
+  const [myCascadeResponseVote, setMyCascadeResponseVote] = useState(null);
 
   // Auto-reconnect when socket gets a new ID after a drop
   useEffect(() => {
@@ -43,6 +46,26 @@ function PlayerView({ gameState, socket }) {
     };
     socket.on('connect', handleConnect);
     return () => socket.off('connect', handleConnect);
+  }, [socket]);
+
+  // Return to main menu if kicked or game is reset
+  useEffect(() => {
+    const handleKicked = () => {
+      storedCreds.current = null;
+      setMode('menu');
+      setServerError('You were removed from the game by the host.');
+    };
+    const handleGameReset = () => {
+      storedCreds.current = null;
+      setMode('menu');
+      setServerError(null);
+    };
+    socket.on('kicked', handleKicked);
+    socket.on('game-reset', handleGameReset);
+    return () => {
+      socket.off('kicked', handleKicked);
+      socket.off('game-reset', handleGameReset);
+    };
   }, [socket]);
 
   useEffect(() => {
@@ -129,6 +152,33 @@ function PlayerView({ gameState, socket }) {
     };
   }, [socket]);
 
+  useEffect(() => {
+    const onCRVoteStart = (data) => {
+      setCascadeResponseVote(data);
+      setCascadeResponseVoteTimeLeft(data.endsInSeconds);
+      setCascadeResponseVoteCounts({ cascadeVotes: 0, acceptVotes: 0 });
+      setMyCascadeResponseVote(null);
+    };
+    const onCRVoteResult = () => {
+      setCascadeResponseVote(null);
+      setCascadeResponseVoteTimeLeft(0);
+      setCascadeResponseVoteCounts({ cascadeVotes: 0, acceptVotes: 0 });
+      setMyCascadeResponseVote(null);
+    };
+    const onCRVoteTimerUpdate = ({ timeLeft }) => setCascadeResponseVoteTimeLeft(timeLeft);
+    const onCRVoteUpdate = (data) => setCascadeResponseVoteCounts({ cascadeVotes: data.cascadeVotes, acceptVotes: data.acceptVotes });
+    socket.on('cascade-response-vote-start', onCRVoteStart);
+    socket.on('cascade-response-vote-result', onCRVoteResult);
+    socket.on('cascade-response-vote-timer-update', onCRVoteTimerUpdate);
+    socket.on('cascade-response-vote-update', onCRVoteUpdate);
+    return () => {
+      socket.off('cascade-response-vote-start', onCRVoteStart);
+      socket.off('cascade-response-vote-result', onCRVoteResult);
+      socket.off('cascade-response-vote-timer-update', onCRVoteTimerUpdate);
+      socket.off('cascade-response-vote-update', onCRVoteUpdate);
+    };
+  }, [socket]);
+
   const currentMe = gameState.players.find((p) => p.id === socket.id);
   const lastMeRef = useRef(null);
   if (currentMe) lastMeRef.current = currentMe;
@@ -191,10 +241,24 @@ function PlayerView({ gameState, socket }) {
     gameState.bettingState?.actionQueue?.[0] === me.id;
 
   const currentBet = gameState.bettingState?.currentBet ?? 0;
+  const betCap = gameState.bettingState?.betCap ?? 0;
   const minRaiseTo = roundToQuarter(currentBet + 0.25);
   const maxRaiseTo = roundToQuarter(
-    Math.min(gameState.bettingState?.betCap ?? 0, (me?.balance ?? 0) + (me?.roundBet ?? 0))
+    Math.min(betCap, (me?.balance ?? 0) + (me?.roundBet ?? 0))
   );
+  const playersInRound = gameState.bettingState?.playersInRound ?? [];
+  const bettingActivePlayers = gameState.players.filter(
+    (p) => playersInRound.includes(p.id) && !p.folded && !p.allIn
+  );
+  const limitingPlayers = bettingActivePlayers.filter(
+    (p) => Math.abs(p.balance - betCap) < 0.01 && p.id !== me?.id
+  );
+  const betCapHint =
+    limitingPlayers.length === 1
+      ? limitingPlayers[0].displayName
+      : limitingPlayers.length > 1
+        ? `${limitingPlayers.length} people`
+        : null;
   const raiseDenominations = [
     { value: 0.25, label: '0.25' },
     { value: 0.5, label: '0.5' },
@@ -231,58 +295,17 @@ function PlayerView({ gameState, socket }) {
   const stage = gameState.currentStage;
   const myTimer = activeTimer?.playerId === me?.id ? activeTimer : null;
   const timerUrgent = myTimer !== null && myTimer.timeLeft <= 10;
-  const playerPositions = me?.positions ?? [];
-  const previousMoneyRef = useRef(null);
-  const moneyPulseTimeoutsRef = useRef({});
+  const rawPositions = me?.positions ?? [];
+  // Only show positions that are "settled" — hide ones gained while a cascade chain wheel
+  // is still mid-spin (i.e. chain exists but promptReady is false).
+  const cascadeWheelActive = !!(cascadeChain && !cascadeChain.promptReady);
+  // We track a committed copy of positions; it gets updated only when the wheel is NOT spinning.
+  const committedPositionsRef = useRef(rawPositions);
+  if (!cascadeWheelActive) {
+    committedPositionsRef.current = rawPositions;
+  }
+  const playerPositions = cascadeWheelActive ? committedPositionsRef.current : rawPositions;
   const previousPositionsRef = useRef(playerPositions);
-
-  useEffect(() => {
-    if (!me) return;
-
-    const current = {
-      balance: Number(me.balance ?? 0),
-      pot: Number(gameState.pot ?? 0),
-      contributed: Number(me.contributedThisRace ?? 0),
-      roundBet: Number(me.roundBet ?? 0),
-      currentBet: Number(currentBet ?? 0),
-    };
-
-    if (!previousMoneyRef.current) {
-      previousMoneyRef.current = current;
-      return;
-    }
-
-    const previous = previousMoneyRef.current;
-    const increasedKeys = Object.keys(current).filter((key) => current[key] > previous[key]);
-
-    if (increasedKeys.length > 0) {
-      setMoneyPulse((prev) => {
-        const next = { ...prev };
-        increasedKeys.forEach((key) => { next[key] = true; });
-        return next;
-      });
-
-      increasedKeys.forEach((key) => {
-        if (moneyPulseTimeoutsRef.current[key]) {
-          clearTimeout(moneyPulseTimeoutsRef.current[key]);
-        }
-        moneyPulseTimeoutsRef.current[key] = setTimeout(() => {
-          setMoneyPulse((prev) => ({ ...prev, [key]: false }));
-          moneyPulseTimeoutsRef.current[key] = null;
-        }, 1000);
-      });
-    }
-
-    previousMoneyRef.current = current;
-  }, [me, gameState.pot, currentBet]);
-
-  useEffect(() => {
-    return () => {
-      Object.values(moneyPulseTimeoutsRef.current).forEach((timeoutId) => {
-        if (timeoutId) clearTimeout(timeoutId);
-      });
-    };
-  }, []);
 
   useEffect(() => {
     if (!me) return;
@@ -356,7 +379,9 @@ function PlayerView({ gameState, socket }) {
         <div style={{ ...styles.joinHeader, padding: '30px 20px 10px' }}>MKMGA</div>
         {!canRegister && (
           <div style={{ ...styles.joinWarning, margin: '0 20px' }}>
-            Registration is closed — the game is already in progress.
+            {inLobby && !gameState.hostSettings?.lobbyOpen
+              ? 'Registration is closed — the game has not been started yet.'
+              : 'Registration is closed — the game is already in progress.'}
           </div>
         )}
         {serverError && <div style={{ ...styles.joinWarning, margin: '0 20px' }}>{serverError}</div>}
@@ -383,33 +408,24 @@ function PlayerView({ gameState, socket }) {
       <div style={styles.playerHud}>
         <div style={styles.playerHudTopRow}>
           <div style={styles.playerHudName}>{me.displayName}</div>
-          <div style={styles.playerHudMoneyWrap}>
-            <div className={moneyPulse.balance ? 'money-increase-flash' : undefined} style={styles.playerHudBalance}>${Number(me.balance).toFixed(2)}</div>
-            {moneyPulse.balance && <span className="money-ticket-pop" style={styles.moneyTicketBadge}>🎟</span>}
-          </div>
+          <MoneyTicker value={me.balance} style={styles.playerHudBalance} />
         </div>
 
         <div style={styles.playerHudGrid}>
           <div style={styles.playerHudStatCard}>
             <div style={styles.playerHudStatLabel}>Pot</div>
-            <div style={styles.playerHudMoneyWrap}>
-              <div className={moneyPulse.pot ? 'money-increase-flash' : undefined} style={styles.playerHudStatValue}>${Number(gameState.pot).toFixed(2)}</div>
-              {moneyPulse.pot && <span className="money-ticket-pop" style={styles.moneyTicketBadge}>🎟</span>}
-            </div>
+            <MoneyTicker value={gameState.pot} style={styles.playerHudStatValue} />
           </div>
           <div style={styles.playerHudStatCard}>
             <div style={styles.playerHudStatLabel}>You Put In</div>
-            <div style={styles.playerHudMoneyWrap}>
-              <div className={moneyPulse.contributed ? 'money-increase-flash' : undefined} style={styles.playerHudStatValue}>${Number(me.contributedThisRace ?? 0).toFixed(2)}</div>
-              {moneyPulse.contributed && <span className="money-ticket-pop" style={styles.moneyTicketBadge}>🎟</span>}
-            </div>
+            <MoneyTicker value={me.contributedThisRace ?? 0} style={styles.playerHudStatValue} />
           </div>
-          <div style={styles.playerHudStatCard}>
-            <div style={styles.playerHudStatLabel}>Current Bet</div>
-            <div style={styles.playerHudMoneyWrap}>
-              <div className={moneyPulse.currentBet ? 'money-increase-flash' : undefined} style={styles.playerHudStatValue}>${Number(currentBet ?? 0).toFixed(2)}</div>
-              {moneyPulse.currentBet && <span className="money-ticket-pop" style={styles.moneyTicketBadge}>🎟</span>}
-            </div>
+          <div style={{ ...styles.playerHudStatCard, ...(maxBetFlash ? styles.maxBetFlashCard : null) }}>
+            <div style={styles.playerHudStatLabel}>Max Bet</div>
+            <MoneyTicker value={betCap} style={{ ...styles.playerHudStatValue, ...(maxBetFlash ? styles.maxBetFlashValue : null) }} />
+            {stage === 'BETTING' && betCapHint && (
+              <div style={styles.betCapHint}>{betCapHint}</div>
+            )}
           </div>
           <div style={styles.playerHudStatCard}>
             <div style={styles.playerHudStatLabel}>Skip/Fold Token</div>
@@ -448,13 +464,17 @@ function PlayerView({ gameState, socket }) {
           <div
             style={{
               ...styles.timerStripFill,
-              width: `${Math.max(0, (activeTimer.timeLeft / (activeTimer.mode === 'position' ? 30 : 60)) * 100)}%`,
+              width: `${Math.max(0, (activeTimer.timeLeft / (activeTimer.mode === 'betting' ? 60 : 30)) * 100)}%`,
               background: activeTimer.timeLeft <= 10 ? '#e74c3c' : activeTimer.timeLeft <= 20 ? '#e67e22' : '#2ecc71',
             }}
           />
           <span style={styles.timerStripLabel}>
             {activeTimer.playerId === me.id
-              ? `⏱ YOUR TURN — ${activeTimer.timeLeft}s remaining`
+              ? activeTimer.mode === 'cascade-response'
+                ? `⚠️ RESPOND TO CASCADE — ${activeTimer.timeLeft}s or your peers decide!`
+                : `⏱ YOUR TURN — ${activeTimer.timeLeft}s remaining`
+              : activeTimer.mode === 'cascade-response'
+              ? `⏳ ${gameState.players.find((p) => p.id === activeTimer.playerId)?.displayName ?? 'Someone'} deciding cascade… ${activeTimer.timeLeft}s`
               : `⏳ ${gameState.players.find((p) => p.id === activeTimer.playerId)?.displayName ?? 'Someone'} is deciding… ${activeTimer.timeLeft}s`}
           </span>
         </div>
@@ -522,9 +542,24 @@ function PlayerView({ gameState, socket }) {
                 <div style={{ color: '#e74c3c', fontWeight: 'bold', fontSize: 18, marginBottom: 2 }}>
                   ⚠️ You were displaced to DNF!
                 </div>
-                <div style={styles.phaseInfo}>
-                  {label} — {dnfSlots}/13 DNF slots ({dnfPct}% chance of DNF)
+                <div style={{ ...styles.phaseInfo, display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
+                  <span>{label} — {dnfSlots}/13 DNF slots ({dnfPct}% chance of DNF)</span>
+                  <button
+                    type="button"
+                    style={styles.cascadeHelpBtn}
+                    onClick={() => setShowDisplacedCascadeHelp((prev) => !prev)}
+                  >
+                    {showDisplacedCascadeHelp ? 'Hide' : 'What is cascade?'}
+                  </button>
                 </div>
+                {showDisplacedCascadeHelp && (
+                  <div style={styles.cascadeHelpText}>
+                    Someone picked your position and chose to cascade. A wheel was spun — and it landed on
+                    your position, displacing you to DNF. Now it&apos;s your turn: <strong>Cascade</strong> to
+                    spin the wheel again and try to escape DNF (at the odds shown above), or{' '}
+                    <strong>Accept DNF</strong> to lock in your DNF result.
+                  </div>
+                )}
                 <div style={styles.actionRow}>
                   <button
                     style={{ ...styles.actionBtn, background: '#1a3a1a', color: '#2ecc71' }}
@@ -544,7 +579,74 @@ function PlayerView({ gameState, socket }) {
           })()}
 
           {/* Position vote overlay / normal pick UI */}
-          {!iAmDisplacedInChain && (positionVote ? (
+          {!iAmDisplacedInChain && (
+
+          /* Cascade-response vote: other players vote on behalf of timed-out displaced player */
+          cascadeResponseVote ? (
+            cascadeResponseVote.timedOutPlayer === me.id ? (
+              <div style={styles.voteWaitBox}>
+                <div style={styles.voteWaitIcon}>⏳</div>
+                <div style={styles.voteWaitTitle}>Your peers are deciding for you!</div>
+                <div style={styles.voteWaitSub}>You took too long — others are voting whether to cascade or accept DNF on your behalf.</div>
+                <div style={styles.voteCountdown}>{cascadeResponseVoteTimeLeft}s remaining</div>
+                {(cascadeResponseVoteCounts.cascadeVotes > 0 || cascadeResponseVoteCounts.acceptVotes > 0) && (
+                  <div style={styles.voteTally}>
+                    <div style={styles.voteTallyRow}><span style={styles.voteTallyLabel}>🎡 Cascade</span><span style={styles.voteTallyCount}>{cascadeResponseVoteCounts.cascadeVotes}</span></div>
+                    <div style={styles.voteTallyRow}><span style={styles.voteTallyLabel}>✋ Accept DNF</span><span style={styles.voteTallyCount}>{cascadeResponseVoteCounts.acceptVotes}</span></div>
+                  </div>
+                )}
+              </div>
+            ) : cascadeResponseVote.voters.includes(me.id) ? (
+              myCascadeResponseVote ? (
+                <div style={styles.voteWaitBox}>
+                  <div style={styles.voteWaitTitle}>Voted: <strong>{myCascadeResponseVote === 'cascade' ? '🎡 Cascade' : '✋ Accept DNF'}</strong></div>
+                  <div style={styles.voteCountdown}>{cascadeResponseVoteTimeLeft}s remaining</div>
+                  {(cascadeResponseVoteCounts.cascadeVotes > 0 || cascadeResponseVoteCounts.acceptVotes > 0) && (
+                    <div style={styles.voteTally}>
+                      <div style={styles.voteTallyRow}><span style={styles.voteTallyLabel}>🎡 Cascade</span><span style={styles.voteTallyCount}>{cascadeResponseVoteCounts.cascadeVotes}</span></div>
+                      <div style={styles.voteTallyRow}><span style={styles.voteTallyLabel}>✋ Accept DNF</span><span style={styles.voteTallyCount}>{cascadeResponseVoteCounts.acceptVotes}</span></div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={styles.voteBox}>
+                  <div style={styles.voteTitle}>
+                    ⏱ Vote for{' '}
+                    <strong>
+                      {gameState.players.find((p) => p.id === cascadeResponseVote.timedOutPlayer)?.displayName ?? 'them'}
+                    </strong>
+                  </div>
+                  <div style={styles.voteSub}>
+                    They ran out of time — should they cascade or accept DNF? ({cascadeResponseVoteTimeLeft}s)
+                  </div>
+                  <div style={styles.actionRow}>
+                    <button
+                      style={{ ...styles.actionBtn, background: '#1a3a1a', color: '#2ecc71' }}
+                      onClick={() => {
+                        setMyCascadeResponseVote('cascade');
+                        socket.emit('cascade-response-vote', { choice: 'cascade' });
+                      }}
+                    >
+                      🎡 Cascade
+                    </button>
+                    <button
+                      style={{ ...styles.actionBtn, background: '#3a1a1a', color: '#e74c3c' }}
+                      onClick={() => {
+                        setMyCascadeResponseVote('accept');
+                        socket.emit('cascade-response-vote', { choice: 'accept' });
+                      }}
+                    >
+                      ✋ Accept DNF
+                    </button>
+                  </div>
+                </div>
+              )
+            ) : (
+              <div style={styles.tvSpinPrompt}>⏳ Waiting for cascade response vote…</div>
+            )
+          ) :
+
+          positionVote ? (
             positionVote.timedOutPlayer === me.id ? (
               /* I’m the timed-out player */
               <div style={styles.voteWaitBox}>
@@ -797,7 +899,7 @@ function PlayerView({ gameState, socket }) {
                   <div style={styles.raisePanel}>
                     <div style={styles.raiseInfo}>Tap chips to build your raise total.</div>
                     <div style={styles.raiseTotalDisplay}>
-                      Raise to: <strong>${Number(raiseTotal ?? minRaiseTo).toFixed(2)}</strong>
+                      Raise to: <strong><MoneyTicker value={raiseTotal ?? minRaiseTo} /></strong>
                     </div>
                     <div style={styles.raiseChipRow}>
                       {raiseDenominations.map((chip) => (
@@ -821,8 +923,16 @@ function PlayerView({ gameState, socket }) {
                     <div style={styles.raiseActionsRow}>
                       <button
                         style={{ ...styles.actionBtn, ...(hasValidRaise ? null : styles.disabledBtn) }}
-                        disabled={!hasValidRaise}
                         onClick={() => {
+                          if (!hasValidRaise) {
+                            if (maxBetFlashTimeoutRef.current) clearTimeout(maxBetFlashTimeoutRef.current);
+                            setMaxBetFlash(true);
+                            maxBetFlashTimeoutRef.current = setTimeout(() => {
+                              setMaxBetFlash(false);
+                              maxBetFlashTimeoutRef.current = null;
+                            }, 700);
+                            return;
+                          }
                           socket.emit('betting-action', { action: 'raise', amount: raiseTotal });
                           setRaiseTotal(null);
                         }}
@@ -894,7 +1004,7 @@ function JoinForm({ onJoin, onBack, error, maxCashCap }) {
     cashAmount: '',
     funStatement: '',
     password: '',
-    confirmPassword: '',
+    favoriteColor: '#2a2a4a',
     profileImageUrl: '',
   });
   const [checks, setChecks] = useState({ rules: false, fairy: false, bibi: false, opcc: false, fy: false });
@@ -929,12 +1039,8 @@ function JoinForm({ onJoin, onBack, error, maxCashCap }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (formData.password.length < 1) {
-      setLocalError('Type a fucking password RETARD.');
-      return;
-    }
-    if (formData.password !== formData.confirmPassword) {
-      setLocalError('Hey DIPSHIT one of your passwords are wrong.');
+    if (!/^#[0-9a-fA-F]{6}$/.test(formData.favoriteColor)) {
+      setLocalError('Choose a valid color.');
       return;
     }
     if (!allChecked) {
@@ -963,10 +1069,15 @@ function JoinForm({ onJoin, onBack, error, maxCashCap }) {
       setLocalError('You must check all boxes before joining.');
       return;
     }
+    if (!formData.password.trim()) {
+      const ok = window.confirm("Are you sure you don't want a password? Anyone can log into your account and make choices on your behalf during the game.");
+      if (!ok) {
+        return;
+      }
+    }
     setLocalError(null);
-    const { confirmPassword, ...submitData } = formData;
     const rawCash = parseFloat(String(formData.cashAmount).replace(/[^0-9.]/g, ''));
-    onJoin({ ...submitData, cashAmount: rawCash });
+    onJoin({ ...formData, cashAmount: rawCash });
   };
 
   const displayError = localError || error;
@@ -987,7 +1098,7 @@ function JoinForm({ onJoin, onBack, error, maxCashCap }) {
           {previewUrl ? (
             <img src={previewUrl} alt="avatar" style={styles.avatarPreview} />
           ) : (
-            <div style={styles.avatarPlaceholder}>?</div>
+            <div style={{ ...styles.avatarPlaceholder, background: formData.favoriteColor, color: '#e8ecf6' }}>{(formData.displayName || formData.realName || '?')[0]?.toUpperCase() ?? '?'}</div>
           )}
           <label style={styles.avatarUploadBtn}>
             {uploading ? 'Uploading…' : previewUrl ? 'Change Photo' : 'Upload Photo (optional)'}
@@ -1046,21 +1157,25 @@ function JoinForm({ onJoin, onBack, error, maxCashCap }) {
           value={formData.funStatement}
           onChange={(e) => setFormData({ ...formData, funStatement: e.target.value })}
         />
+        <div style={styles.colorPickerRow}>
+          <label style={styles.colorPickerLabel} htmlFor="favoriteColorInput">Choose your favorite color</label>
+          <div style={styles.colorPickerControlWrap}>
+            <input
+              id="favoriteColorInput"
+              style={styles.colorPickerInput}
+              type="color"
+              value={formData.favoriteColor}
+              onChange={(e) => setFormData({ ...formData, favoriteColor: e.target.value })}
+            />
+            <span style={styles.colorPickerValue}>{formData.favoriteColor.toUpperCase()}</span>
+          </div>
+        </div>
         <input
           style={styles.joinInput}
           type="password"
-          placeholder="Password"
+          placeholder="Password (optional)"
           value={formData.password}
           onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-          required
-        />
-        <input
-          style={styles.joinInput}
-          type="password"
-          placeholder="Confirm Password"
-          value={formData.confirmPassword}
-          onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
-          required
         />
 
         <div style={styles.joinWarning}>
@@ -1109,9 +1224,11 @@ function ReconnectForm({ players, onReconnect, onBack, error }) {
   const [selected, setSelected] = useState(null); // player object
   const [password, setPassword] = useState('');
 
+  const getFavoriteColor = (player) => (/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(String(player?.favoriteColor || '').trim()) ? player.favoriteColor : '#2a2a4a');
+
   const handleSubmit = (e) => {
     e.preventDefault();
-    onReconnect({ realName: selected.realName, password });
+    onReconnect({ realName: selected.realName, password: selected?.hasPassword ? password : '' });
   };
 
   // Step 2 — password input after selecting a player
@@ -1126,7 +1243,7 @@ function ReconnectForm({ players, onReconnect, onBack, error }) {
         <div style={styles.rcSelectedCard}>
           {selected.profileImageUrl
             ? <img src={selected.profileImageUrl} alt="" style={styles.rcSelectedAvatar} />
-            : <div style={{ ...styles.rcSelectedAvatar, ...styles.rcAvatarFallback }}>{initial}</div>}
+            : <div style={{ ...styles.rcSelectedAvatar, ...styles.rcAvatarFallback, background: getFavoriteColor(selected) }}>{initial}</div>}
           <div>
             <div style={styles.rcSelectedName}>{selected.displayName}</div>
             <div style={styles.rcSelectedReal}>{selected.realName}</div>
@@ -1134,15 +1251,21 @@ function ReconnectForm({ players, onReconnect, onBack, error }) {
         </div>
         <form onSubmit={handleSubmit} style={{ ...styles.joinForm, marginTop: 0 }}>
           {error && <div style={{ ...styles.joinWarning, marginBottom: 10 }}>{error}</div>}
-          <input
-            style={styles.joinInput}
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoFocus
-            required
-          />
+          {selected.hasPassword ? (
+            <input
+              style={styles.joinInput}
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoFocus
+              required
+            />
+          ) : (
+            <div style={styles.joinWarning}>
+              This account has no password. Anyone can reconnect as this player.
+            </div>
+          )}
           <button type="submit" style={{ ...styles.joinBtn, marginTop: 16 }}>Reconnect</button>
         </form>
       </div>
@@ -1164,7 +1287,7 @@ function ReconnectForm({ players, onReconnect, onBack, error }) {
             <button key={p.realName} style={styles.rcCard} onClick={() => setSelected(p)}>
               {p.profileImageUrl
                 ? <img src={p.profileImageUrl} alt="" style={styles.rcCardAvatar} />
-                : <div style={{ ...styles.rcCardAvatar, ...styles.rcAvatarFallback }}>{init}</div>}
+                : <div style={{ ...styles.rcCardAvatar, ...styles.rcAvatarFallback, background: getFavoriteColor(p) }}>{init}</div>}
               <div style={styles.rcCardDisplayName}>{p.displayName}</div>
               <div style={styles.rcCardRealName}>{p.realName}</div>
             </button>
@@ -1224,6 +1347,38 @@ const styles = {
     color: '#fff',
     fontSize: 16,
     padding: '10px 12px',
+  },
+  colorPickerRow: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+    background: '#121212',
+    border: '1px solid #2a2a2a',
+    borderRadius: 6,
+    padding: '9px 12px',
+  },
+  colorPickerLabel: {
+    fontSize: 13,
+    color: '#9fb3c8',
+  },
+  colorPickerControlWrap: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+  },
+  colorPickerInput: {
+    width: 44,
+    height: 32,
+    border: '1px solid #3a3a3a',
+    borderRadius: 6,
+    background: 'transparent',
+    padding: 0,
+    cursor: 'pointer',
+  },
+  colorPickerValue: {
+    fontFamily: 'monospace',
+    color: '#d7e4f2',
+    fontSize: 13,
   },
   joinWarning: {
     background: '#2a1a00',
@@ -1441,6 +1596,23 @@ const styles = {
   },
   tokenUsed: {
     color: '#e74c3c',
+  },
+  betCapHint: {
+    fontSize: 11,
+    color: 'rgba(138, 162, 190, 0.55)',
+    marginTop: 2,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  maxBetFlashCard: {
+    border: '1px solid #e74c3c',
+    background: '#1f0a0a',
+    transition: 'border-color 0.1s, background 0.1s',
+  },
+  maxBetFlashValue: {
+    color: '#e74c3c',
+    transition: 'color 0.1s',
   },
   playerHudPositionsWrap: {
     background: '#10161f',

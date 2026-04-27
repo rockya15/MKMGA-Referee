@@ -17,7 +17,7 @@ class BettingEngine {
 
     let betCap = 0;
     if (playersInRound.length > 0) {
-      betCap = Math.min(...playersInRound.map((player) => player.balance));
+      betCap = this.roundToQuarter(Math.min(...playersInRound.map((player) => player.balance)) / 2);
     }
 
     this.gameState.bettingState.currentBet = 0;
@@ -71,7 +71,7 @@ class BettingEngine {
       return;
     }
 
-    this.gameState.bettingState.betCap = Math.min(...activePlayers.map((player) => player.balance));
+    this.gameState.bettingState.betCap = this.roundToQuarter(Math.min(...activePlayers.map((player) => player.balance)) / 2);
   }
 
   requeueAfterRaise(raiserId) {

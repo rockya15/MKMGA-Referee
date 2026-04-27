@@ -17,6 +17,17 @@ const STAGES = {
 const POSITIONS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', 'DNF'];
 const GENTLE_DNF_SLOTS = [1, 2, 4, 8, 13];
 const HARSH_DNF_SLOTS = [4, 8, 13];
+const DEFAULT_FAVORITE_COLOR = '#2a2a4a';
+
+function normalizeFavoriteColor(value) {
+  const raw = String(value || '').trim();
+  const sixHex = /^#[0-9a-fA-F]{6}$/;
+  const threeHex = /^#[0-9a-fA-F]{3}$/;
+  if (sixHex.test(raw) || threeHex.test(raw)) {
+    return raw.toLowerCase();
+  }
+  return DEFAULT_FAVORITE_COLOR;
+}
 
 class GameState {
   constructor() {
@@ -67,7 +78,12 @@ class GameState {
     };
 
     this.currentStage = merged.currentStage;
-    this.players = Array.isArray(merged.players) ? merged.players : [];
+    this.players = Array.isArray(merged.players)
+      ? merged.players.map((player) => ({
+        ...player,
+        favoriteColor: normalizeFavoriteColor(player.favoriteColor),
+      }))
+      : [];
     this.hostSettings = merged.hostSettings || { maxCashCap: null, lobbyOpen: false };
     this.raceNumber = Number.isFinite(merged.raceNumber) ? merged.raceNumber : 1;
     this.pot = Number.isFinite(merged.pot) ? merged.pot : 0;
@@ -138,13 +154,10 @@ class GameState {
     const realName = String(playerData.realName || '').trim();
     const cashAmount = Number(playerData.cashAmount);
     const password = String(playerData.password || '').trim();
+    const favoriteColor = normalizeFavoriteColor(playerData.favoriteColor);
 
     if (!displayName || !realName) {
       return { error: 'Display name and real name are required.' };
-    }
-
-    if (!password || password.length < 1) {
-      return { error: 'Password is required.' };
     }
 
     if (this.getDisplayNameTaken(displayName)) {
@@ -167,8 +180,9 @@ class GameState {
       return { error: `Cash amount exceeds max cap of $${this.hostSettings.maxCashCap.toFixed(2)}.` };
     }
 
-    const salt = crypto.randomBytes(16).toString('hex');
-    const passwordHash = hashPassword(password, salt);
+    const hasPassword = password.length > 0;
+    const salt = hasPassword ? crypto.randomBytes(16).toString('hex') : null;
+    const passwordHash = hasPassword ? hashPassword(password, salt) : null;
 
     const player = {
       id: socketId,
@@ -187,6 +201,8 @@ class GameState {
       contributedThisRace: 0,
       roundBet: 0,
       positions: [],
+      isBot: Boolean(playerData.isBot),
+      favoriteColor,
       profileImageUrl: String(playerData.profileImageUrl || '').trim() || null,
       passwordHash,
       salt
@@ -213,7 +229,9 @@ class GameState {
     }
 
     if (!candidate.salt || !candidate.passwordHash) {
-      return { error: 'This account has no password set. Please contact the host.' };
+      candidate.id = socketId;
+      candidate.connected = true;
+      return { player: candidate, rejoined: true };
     }
 
     const hash = hashPassword(String(password), candidate.salt);
@@ -231,6 +249,84 @@ class GameState {
     if (player) {
       player.connected = false;
     }
+  }
+
+  // ── Admin helpers ────────────────────────────────────────────────────────────
+
+  adminKickPlayer(playerId) {
+    const idx = this.players.findIndex((p) => p.id === playerId);
+    if (idx === -1) return { error: 'Player not found.' };
+    const player = this.players[idx];
+
+    // Clean up positionDraft if the player was involved
+    if (this.positionDraft) {
+      const draft = this.positionDraft;
+      // Remove from occupiedPositions
+      if (player.positions) {
+        for (const pos of player.positions) {
+          if (draft.occupiedPositions?.[pos] === playerId) {
+            delete draft.occupiedPositions[pos];
+          }
+        }
+      }
+      // Remove from remainingByPlayer
+      delete draft.remainingByPlayer?.[playerId];
+      // If the cascade chain involves this player, clear it
+      if (draft.cascadeChain?.pendingDisplacedId === playerId || draft.cascadeChain?.initiatorId === playerId) {
+        draft.cascadeChain = null;
+        draft.cascadeChainSpent = false;
+      }
+      // Rebuild wheelOrder without this player
+      this.wheelOrder = (this.wheelOrder || []).filter((id) => id !== playerId);
+      // Advance currentPlayerIndex if it now points past the end
+      if (draft.currentPlayerIndex >= this.wheelOrder.length) {
+        draft.currentPlayerIndex = Math.max(0, this.wheelOrder.length - 1);
+      }
+    }
+
+    // Remove from betting state action queue / playersInRound
+    if (this.bettingState) {
+      this.bettingState.actionQueue = (this.bettingState.actionQueue || []).filter((id) => id !== playerId);
+      this.bettingState.playersInRound = (this.bettingState.playersInRound || []).filter((id) => id !== playerId);
+      delete this.bettingState.raiseLockedPlayers?.[playerId];
+    }
+
+    this.players.splice(idx, 1);
+    return { success: true, displayName: player.displayName };
+  }
+
+  adminSetBalance(playerId, newBalance) {
+    const player = this.getPlayerById(playerId);
+    if (!player) return { error: 'Player not found.' };
+    const val = Number(newBalance);
+    if (!Number.isFinite(val) || val < 0) return { error: 'Balance must be a non-negative number.' };
+    player.balance = this.roundToQuarter(val);
+    return { success: true };
+  }
+
+  adminSetPositions(playerId, positions) {
+    const player = this.getPlayerById(playerId);
+    if (!player) return { error: 'Player not found.' };
+    if (!Array.isArray(positions)) return { error: 'Positions must be an array.' };
+    const valid = positions.filter((p) => POSITIONS.includes(p));
+
+    // Release old occupied slots belonging to this player in positionDraft
+    if (this.positionDraft) {
+      const draft = this.positionDraft;
+      for (const pos of (player.positions || [])) {
+        if (draft.occupiedPositions?.[pos] === playerId) {
+          delete draft.occupiedPositions[pos];
+        }
+      }
+      // Claim new slots
+      for (const pos of valid) {
+        draft.occupiedPositions = draft.occupiedPositions || {};
+        draft.occupiedPositions[pos] = playerId;
+      }
+    }
+
+    player.positions = valid;
+    return { success: true };
   }
 
   openLobby(maxCashCap) {

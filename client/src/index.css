@@ -68,6 +68,26 @@ code {
   animation: cascade-wheel-pop-in 420ms cubic-bezier(0.17, 0.67, 0.25, 1.25) both;
 }
 
+@keyframes cascade-border-flash {
+  0%   { box-shadow: 0 0 12px 2px rgba(231,76,60,0.35); border-color: #2a3a50; }
+  50%  { box-shadow: 0 0 34px 10px rgba(231,76,60,0.92), 0 0 70px 20px rgba(180,30,30,0.52); border-color: #e74c3c; }
+  100% { box-shadow: 0 0 12px 2px rgba(231,76,60,0.35); border-color: #2a3a50; }
+}
+
+.cascade-wheel-spinning {
+  animation: cascade-border-flash 0.9s ease-in-out infinite;
+}
+
+@keyframes cascade-dnf-result-pulse {
+  0%   { box-shadow: 0 0 60px rgba(231,76,60,0.55), inset 0 0 50px rgba(180,30,30,0.25); }
+  50%  { box-shadow: 0 0 110px rgba(231,76,60,0.95), 0 0 170px rgba(180,30,30,0.55), inset 0 0 70px rgba(180,30,30,0.45); }
+  100% { box-shadow: 0 0 60px rgba(231,76,60,0.55), inset 0 0 50px rgba(180,30,30,0.25); }
+}
+
+.cascade-dnf-result-pulse {
+  animation: cascade-dnf-result-pulse 1.4s ease-in-out infinite;
+}
+
 .cascade-title-fade {
   opacity: 0;
   animation: cascade-title-fade-in 520ms ease-out 260ms forwards;
@@ -158,4 +178,24 @@ code {
 
 .position-pill-select {
   animation: position-pill-select 1s ease-out;
+}
+
+/* ── MoneyDelta floating indicator ─────────────────────────────────────────── */
+.money-delta-indicator {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 200;
+  font-size: 0.78em;
+  font-weight: bold;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+  animation: money-delta-float 1.1s ease-out forwards;
+}
+
+@keyframes money-delta-float {
+  0%   { opacity: 1;   transform: translateX(-50%) translateY(0); }
+  15%  { opacity: 1;   transform: translateX(-50%) translateY(-6px); }
+  100% { opacity: 0;   transform: translateX(-50%) translateY(-44px); }
 }
