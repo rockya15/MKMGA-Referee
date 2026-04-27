@@ -643,9 +643,9 @@ function addDebugBots(count, startingCash) {
   const wanted = clampInt(count, 1, 24);
   const baseCash = Number(startingCash);
   const maxCap = Number(gameState.hostSettings.maxCashCap || 0);
-  const safeCash = Number.isFinite(baseCash) && baseCash > 0
-    ? Math.min(baseCash, maxCap || baseCash)
-    : (maxCap > 0 ? maxCap : 5);
+  const safeCash = maxCap > 0
+    ? maxCap
+    : (Number.isFinite(baseCash) && baseCash > 0 ? baseCash : 15);
 
   let added = 0;
   for (let i = 0; i < wanted; i += 1) {

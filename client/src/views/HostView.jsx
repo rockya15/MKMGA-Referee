@@ -7,10 +7,23 @@ import MoneyDelta from '../components/MoneyDelta';
 const WHEEL_STAGES = ['POSITION_ASSIGNMENT'];
 const CASCADE_PRE_SPIN_DELAY_MS = 5000;
 const ACTIVE_PANEL_TRANSITION_MS = 760;
+const LEADERBOARD_POSITION_ORDER = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', 'DNF'];
+const LEADERBOARD_POSITION_RANK = new Map(LEADERBOARD_POSITION_ORDER.map((position, index) => [position, index]));
 // How long to hold the cascade result on-screen before telling the server the spin is done.
 // For DNF (no displaced player) this is the full hold; for swaps the displaced player's
 // response is what eventually clears the card anyway.
 const CASCADE_RESULT_HOLD_MS = 7000;
+
+function getLeaderboardPosition(player) {
+  const positions = Array.isArray(player?.positions) ? player.positions : [];
+  if (!positions.length) return null;
+
+  return [...positions].sort((left, right) => {
+    const leftRank = LEADERBOARD_POSITION_RANK.get(left) ?? Number.MAX_SAFE_INTEGER;
+    const rightRank = LEADERBOARD_POSITION_RANK.get(right) ?? Number.MAX_SAFE_INTEGER;
+    return leftRank - rightRank;
+  })[0];
+}
 
 function PresenceSlide({ show, direction = 'down', duration = 760, children, style }) {
   const [shouldRender, setShouldRender] = useState(show);
@@ -426,11 +439,22 @@ function HostView({ gameState, socket }) {
     revealPicker(player, targetIndex);
   }, [targetIndex, revealPicker]);
 
-  const sortedPlayers = [...players].sort((a, b) => b.balance - a.balance);
   const getFavoriteColor = (player) => {
     const raw = String(player?.favoriteColor || '').trim();
     return /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(raw) ? raw : '#2a2a4a';
   };
+  const sortedPlayers = [...players]
+    .filter((player) => getLeaderboardPosition(player) !== null)
+    .sort((left, right) => {
+      const positionDiff = (LEADERBOARD_POSITION_RANK.get(getLeaderboardPosition(left)) ?? Number.MAX_SAFE_INTEGER)
+        - (LEADERBOARD_POSITION_RANK.get(getLeaderboardPosition(right)) ?? Number.MAX_SAFE_INTEGER);
+      if (positionDiff !== 0) return positionDiff;
+      return left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' });
+    });
+  const unsortedPlayers = [...players]
+    .filter((player) => getLeaderboardPosition(player) === null)
+    .sort((left, right) => left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' }));
+  const leaderboardPlayerCount = sortedPlayers.length + unsortedPlayers.length;
   const wheelSegmentColors = segments.map((seg) => seg.color ?? '#2a2a4a');
   const entryFeeDisplay = entryFee === 'ALL_IN' ? 'ALL IN' : `$${Number(entryFee).toFixed(2)}`;
   const cascadeActive = !!cascadeSpinData;
@@ -536,7 +560,7 @@ function HostView({ gameState, socket }) {
         autoScrollRafRef.current = null;
       }
     };
-  }, [leaderboardFocusPlayerId, sortedPlayers.length]);
+  }, [leaderboardFocusPlayerId, leaderboardPlayerCount]);
 
   const onLeaderboardWheel = useCallback((e) => {
     const el = leaderboardRef.current;
@@ -560,6 +584,58 @@ function HostView({ gameState, socket }) {
       el.scrollTop = next;
     }
   }, []);
+
+  const renderLeaderboardRow = (player, index, { dimmed = false, showRank = true } = {}) => {
+    const isOnClock = activeTimer?.playerId === player.id;
+    const timerUrgent = isOnClock && activeTimer.timeLeft <= 10;
+    const isWheelFocus = WHEEL_STAGES.includes(currentStage) && wheelFocusPlayerId === player.id;
+
+    return (
+      <div
+        key={player.id}
+        ref={(el) => {
+          if (el) rowRefs.current.set(player.id, el);
+          else rowRefs.current.delete(player.id);
+        }}
+        style={{
+          ...styles.lbRow,
+          opacity: player.balance <= 0 ? 0.4 : dimmed ? 0.7 : 1,
+          filter: dimmed ? 'grayscale(0.45)' : 'none',
+          background: isOnClock
+            ? (timerUrgent ? '#2a0000' : '#001a0a')
+            : isWheelFocus
+              ? '#2a2410'
+              : player.balance <= 0
+                ? '#1a0000'
+                : dimmed
+                  ? '#161616'
+                  : index % 2 === 0
+                    ? '#151515'
+                    : '#1c1c1c',
+          border: isOnClock
+            ? `1px solid ${timerUrgent ? '#e74c3c' : '#2ecc71'}`
+            : isWheelFocus
+              ? '1px solid #f0c040'
+              : dimmed
+                ? '1px solid #2b2b2b'
+                : '1px solid transparent',
+        }}
+      >
+        <span style={styles.lbRank}>{showRank ? `#${index + 1}` : '...'}</span>
+        {player.profileImageUrl ? <img src={player.profileImageUrl} alt="" style={styles.lbAvatar} /> : <div style={{ ...styles.lbAvatarPlaceholder, background: getFavoriteColor(player), borderColor: getFavoriteColor(player) }}>{player.displayName?.[0]?.toUpperCase() ?? '?'}</div>}
+        <span style={styles.lbName}>{player.displayName}</span>
+        {isWheelFocus && !isOnClock && <span style={styles.lbFocusBadge}>FOCUS</span>}
+        {isOnClock && (
+          <span style={{ ...styles.lbTimerBadge, color: timerUrgent ? '#e74c3c' : '#2ecc71', borderColor: timerUrgent ? '#e74c3c' : '#2ecc71' }}>
+            {activeTimer.timeLeft}s
+          </span>
+        )}
+        <MoneyDelta value={player.balance}><MoneyTicker value={player.balance} prefix="$" style={styles.lbBalance} /></MoneyDelta>
+        {player.positions?.length > 0 && <span style={styles.lbPositions}>[{player.positions.join(', ')}]</span>}
+        {!player.skipFoldTokenAvailable && <span style={styles.lbNoToken}>NO TOKEN</span>}
+      </div>
+    );
+  };
 
   return (
     <div style={styles.root}>
@@ -710,39 +786,17 @@ function HostView({ gameState, socket }) {
               onWheel={onLeaderboardWheel}
             >
               <div style={styles.lbTitle}>PLAYERS</div>
-              {sortedPlayers.map((p, i) => {
-                const isOnClock = activeTimer?.playerId === p.id;
-                const timerUrgent = isOnClock && activeTimer.timeLeft <= 10;
-                const isWheelFocus = WHEEL_STAGES.includes(currentStage) && wheelFocusPlayerId === p.id;
-                return (
-                  <div
-                    key={p.id}
-                    ref={(el) => {
-                      if (el) rowRefs.current.set(p.id, el);
-                      else rowRefs.current.delete(p.id);
-                    }}
-                    style={{
-                      ...styles.lbRow,
-                      opacity: p.balance <= 0 ? 0.4 : 1,
-                      background: isOnClock ? (timerUrgent ? '#2a0000' : '#001a0a') : isWheelFocus ? '#2a2410' : p.balance <= 0 ? '#1a0000' : i % 2 === 0 ? '#151515' : '#1c1c1c',
-                      border: isOnClock ? `1px solid ${timerUrgent ? '#e74c3c' : '#2ecc71'}` : isWheelFocus ? '1px solid #f0c040' : '1px solid transparent',
-                    }}
-                  >
-                    <span style={styles.lbRank}>#{i + 1}</span>
-                    {p.profileImageUrl ? <img src={p.profileImageUrl} alt="" style={styles.lbAvatar} /> : <div style={{ ...styles.lbAvatarPlaceholder, background: getFavoriteColor(p), borderColor: getFavoriteColor(p) }}>{p.displayName?.[0]?.toUpperCase() ?? '?'}</div>}
-                    <span style={styles.lbName}>{p.displayName}</span>
-                    {isWheelFocus && !isOnClock && <span style={styles.lbFocusBadge}>FOCUS</span>}
-                    {isOnClock && (
-                      <span style={{ ...styles.lbTimerBadge, color: timerUrgent ? '#e74c3c' : '#2ecc71', borderColor: timerUrgent ? '#e74c3c' : '#2ecc71' }}>
-                        {activeTimer.timeLeft}s
-                      </span>
-                    )}
-                    <MoneyDelta value={p.balance}><MoneyTicker value={p.balance} prefix="$" style={styles.lbBalance} /></MoneyDelta>
-                    {p.positions?.length > 0 && <span style={styles.lbPositions}>[{p.positions.join(', ')}]</span>}
-                    {!p.skipFoldTokenAvailable && <span style={styles.lbNoToken}>NO TOKEN</span>}
+              {sortedPlayers.map((player, index) => renderLeaderboardRow(player, index))}
+              {unsortedPlayers.length > 0 && (
+                <>
+                  <div style={styles.lbDivider}>
+                    <span style={styles.lbDividerLine} />
+                    <span style={styles.lbDividerLabel}>Awaiting Position</span>
+                    <span style={styles.lbDividerLine} />
                   </div>
-                );
-              })}
+                  {unsortedPlayers.map((player, index) => renderLeaderboardRow(player, index, { dimmed: true, showRank: false }))}
+                </>
+              )}
             </div>
           </div>
         </PresenceSlide>
@@ -906,6 +960,24 @@ const styles = {
     color: '#f0c040',
     textTransform: 'uppercase',
     marginBottom: 8,
+  },
+  lbDivider: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    margin: '10px 0 6px',
+  },
+  lbDividerLine: {
+    flex: 1,
+    height: 1,
+    background: '#313131',
+  },
+  lbDividerLabel: {
+    color: '#8a8a8a',
+    fontSize: 11,
+    fontWeight: 'bold',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
   },
   lbRow: {
     display: 'flex',

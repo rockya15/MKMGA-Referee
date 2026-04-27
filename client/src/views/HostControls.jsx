@@ -149,9 +149,8 @@ function PlayerCard({ p, gameState, socket, onError, onSuccess }) {
 
 function HostControls({ gameState, socket }) {
   const [resultPlacement, setResultPlacement] = useState('1');
-  const [maxCashCap, setMaxCashCap] = useState('10');
+  const [maxCashCap, setMaxCashCap] = useState('15');
   const [botAddCount, setBotAddCount] = useState('4');
-  const [botStartingCash, setBotStartingCash] = useState('5');
   const [botAutoPick, setBotAutoPick] = useState(true);
   const [botDelayMs, setBotDelayMs] = useState('1000');
   const [botPreBetMode, setBotPreBetMode] = useState('AUTO');
@@ -159,6 +158,8 @@ function HostControls({ gameState, socket }) {
   const [botBettingMode, setBotBettingMode] = useState('AUTO');
   const [botCascadeMode, setBotCascadeMode] = useState('AUTO');
   const [botVoteMode, setBotVoteMode] = useState('AUTO');
+  const [debugPanelOpen, setDebugPanelOpen] = useState(false);
+  const [debugBotsOpen, setDebugBotsOpen] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -190,6 +191,7 @@ function HostControls({ gameState, socket }) {
   // Current picker name during position assignment
   const currentPickerId = positionDraft ? wheelOrder?.[positionDraft.currentPlayerIndex] : null;
   const currentPicker = players.find((p) => p.id === currentPickerId);
+  const botStartingCash = String(gameState.hostSettings?.maxCashCap ?? maxCashCap);
 
   useEffect(() => {
     const cfg = gameState.debugTools;
@@ -378,102 +380,130 @@ function HostControls({ gameState, socket }) {
         </div>
       </div>
 
-      {/* ── DEBUG BOTS ── */}
+      {/* ── DEBUG PANEL ── */}
       <div style={styles.section}>
-        <div style={styles.sectionTitle}>Debug Bots</div>
-        <div style={styles.hint}>Bots in game: <strong>{botPlayers.length}</strong> {gameState.debugTools?.autoPick ? '· auto-pick ON' : '· auto-pick OFF'}</div>
+        <button
+          style={styles.panelToggleBtn}
+          onClick={() => setDebugPanelOpen((v) => !v)}
+        >
+          <span style={styles.sectionTitle}>Debug Panel</span>
+          <span style={styles.panelToggleIcon}>{debugPanelOpen ? '▾' : '▸'}</span>
+        </button>
 
-        <div style={styles.rowWrap}>
-          <div style={styles.row}>
-            <label style={styles.label}>Add Bots</label>
-            <input style={styles.input} type="number" min="1" max="24" value={botAddCount} onChange={(e) => setBotAddCount(e.target.value)} />
-            <label style={styles.labelTight}>Cash</label>
-            <input style={styles.input} type="number" min="0.25" step="0.25" value={botStartingCash} onChange={(e) => setBotStartingCash(e.target.value)} />
+        {debugPanelOpen && (
+          <div style={styles.debugPanelBody}>
             <button
-              style={styles.smallBtn}
-              onClick={() => handleAction('debug-add-bots', { count: Number(botAddCount), startingCash: Number(botStartingCash) })}
+              style={styles.subPanelToggleBtn}
+              onClick={() => setDebugBotsOpen((v) => !v)}
             >
-              Add
+              <span style={styles.subPanelTitle}>Bots</span>
+              <span style={styles.panelToggleIcon}>{debugBotsOpen ? '▾' : '▸'}</span>
             </button>
-            <button style={{ ...styles.smallBtn, background: '#5a1a1a', color: '#f88' }} onClick={() => handleAction('debug-clear-bots')}>
-              Clear Bots
-            </button>
+
+            {debugBotsOpen && (
+              <>
+                <div style={styles.hint}>Bots in game: <strong>{botPlayers.length}</strong> {gameState.debugTools?.autoPick ? '· auto-pick ON' : '· auto-pick OFF'}</div>
+
+                <div style={styles.rowWrap}>
+                  <div style={styles.row}>
+                    <label style={styles.label}>Add Bots</label>
+                    <input style={styles.input} type="number" min="1" max="24" value={botAddCount} onChange={(e) => setBotAddCount(e.target.value)} />
+                    <label style={styles.labelTight}>Cash</label>
+                    <input style={{ ...styles.input, ...styles.inputDisabled }} type="number" min="0.25" step="0.25" value={botStartingCash} readOnly disabled />
+                    <button
+                      style={styles.smallBtn}
+                      onClick={() => handleAction('debug-add-bots', {
+                        count: Number(botAddCount),
+                        startingCash: Number(gameState.hostSettings?.maxCashCap ?? maxCashCap),
+                      })}
+                    >
+                      Add
+                    </button>
+                    <button style={{ ...styles.smallBtn, background: '#5a1a1a', color: '#f88' }} onClick={() => handleAction('debug-clear-bots')}>
+                      Clear Bots
+                    </button>
+                  </div>
+                </div>
+
+                <div style={styles.hint}>Bot cash always matches the current lobby cap.</div>
+
+                <label style={styles.checkLabelInline}>
+                  <input type="checkbox" checked={botAutoPick} onChange={(e) => setBotAutoPick(e.target.checked)} />
+                  Auto-pick when bot choices arise
+                </label>
+
+                <div style={styles.row}>
+                  <label style={styles.label}>Decision Delay (ms)</label>
+                  <input style={styles.inputWide} type="number" min="0" step="100" value={botDelayMs} onChange={(e) => setBotDelayMs(e.target.value)} />
+                </div>
+
+                <div style={styles.selectGrid}>
+                  <label style={styles.selectLabel}>Pre-Bet
+                    <select style={styles.select} value={botPreBetMode} onChange={(e) => setBotPreBetMode(e.target.value)}>
+                      <option value="AUTO">AUTO</option>
+                      <option value="PAY">PAY</option>
+                      <option value="SKIP">SKIP</option>
+                      <option value="RANDOM">RANDOM</option>
+                    </select>
+                  </label>
+                  <label style={styles.selectLabel}>Position
+                    <select style={styles.select} value={botPositionMode} onChange={(e) => setBotPositionMode(e.target.value)}>
+                      <option value="AUTO">AUTO</option>
+                      <option value="RANDOM">RANDOM</option>
+                      <option value="SAFE_FIRST">SAFE_FIRST</option>
+                      <option value="PREFER_DNF">PREFER_DNF</option>
+                    </select>
+                  </label>
+                  <label style={styles.selectLabel}>Betting
+                    <select style={styles.select} value={botBettingMode} onChange={(e) => setBotBettingMode(e.target.value)}>
+                      <option value="AUTO">AUTO</option>
+                      <option value="CHECK_CALL">CHECK_CALL</option>
+                      <option value="FOLD_IF_POSSIBLE">FOLD_IF_POSSIBLE</option>
+                      <option value="RANDOM">RANDOM</option>
+                    </select>
+                  </label>
+                  <label style={styles.selectLabel}>Cascade
+                    <select style={styles.select} value={botCascadeMode} onChange={(e) => setBotCascadeMode(e.target.value)}>
+                      <option value="AUTO">AUTO</option>
+                      <option value="CASCADE">CASCADE</option>
+                      <option value="ACCEPT_DNF">ACCEPT_DNF</option>
+                      <option value="RANDOM">RANDOM</option>
+                    </select>
+                  </label>
+                  <label style={styles.selectLabel}>Votes
+                    <select style={styles.select} value={botVoteMode} onChange={(e) => setBotVoteMode(e.target.value)}>
+                      <option value="AUTO">AUTO</option>
+                      <option value="RANDOM">RANDOM</option>
+                      <option value="FIRST">FIRST</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div style={styles.row}>
+                  <button
+                    style={styles.btn}
+                    onClick={() => handleAction('debug-bot-config', {
+                      settings: {
+                        autoPick: botAutoPick,
+                        decisionDelayMs: Number(botDelayMs),
+                        preBetMode: botPreBetMode,
+                        positionMode: botPositionMode,
+                        bettingMode: botBettingMode,
+                        cascadeMode: botCascadeMode,
+                        voteMode: botVoteMode,
+                      }
+                    })}
+                  >
+                    Apply Bot Settings
+                  </button>
+                  <button style={{ ...styles.smallBtn, background: '#333', color: '#ddd' }} onClick={() => handleAction('debug-run-bot-step')}>
+                    Run One Bot Step
+                  </button>
+                </div>
+              </>
+            )}
           </div>
-        </div>
-
-        <label style={styles.checkLabelInline}>
-          <input type="checkbox" checked={botAutoPick} onChange={(e) => setBotAutoPick(e.target.checked)} />
-          Auto-pick when bot choices arise
-        </label>
-
-        <div style={styles.row}>
-          <label style={styles.label}>Decision Delay (ms)</label>
-          <input style={styles.inputWide} type="number" min="0" step="100" value={botDelayMs} onChange={(e) => setBotDelayMs(e.target.value)} />
-        </div>
-
-        <div style={styles.selectGrid}>
-          <label style={styles.selectLabel}>Pre-Bet
-            <select style={styles.select} value={botPreBetMode} onChange={(e) => setBotPreBetMode(e.target.value)}>
-              <option value="AUTO">AUTO</option>
-              <option value="PAY">PAY</option>
-              <option value="SKIP">SKIP</option>
-              <option value="RANDOM">RANDOM</option>
-            </select>
-          </label>
-          <label style={styles.selectLabel}>Position
-            <select style={styles.select} value={botPositionMode} onChange={(e) => setBotPositionMode(e.target.value)}>
-              <option value="AUTO">AUTO</option>
-              <option value="RANDOM">RANDOM</option>
-              <option value="SAFE_FIRST">SAFE_FIRST</option>
-              <option value="PREFER_DNF">PREFER_DNF</option>
-            </select>
-          </label>
-          <label style={styles.selectLabel}>Betting
-            <select style={styles.select} value={botBettingMode} onChange={(e) => setBotBettingMode(e.target.value)}>
-              <option value="AUTO">AUTO</option>
-              <option value="CHECK_CALL">CHECK_CALL</option>
-              <option value="FOLD_IF_POSSIBLE">FOLD_IF_POSSIBLE</option>
-              <option value="RANDOM">RANDOM</option>
-            </select>
-          </label>
-          <label style={styles.selectLabel}>Cascade
-            <select style={styles.select} value={botCascadeMode} onChange={(e) => setBotCascadeMode(e.target.value)}>
-              <option value="AUTO">AUTO</option>
-              <option value="CASCADE">CASCADE</option>
-              <option value="ACCEPT_DNF">ACCEPT_DNF</option>
-              <option value="RANDOM">RANDOM</option>
-            </select>
-          </label>
-          <label style={styles.selectLabel}>Votes
-            <select style={styles.select} value={botVoteMode} onChange={(e) => setBotVoteMode(e.target.value)}>
-              <option value="AUTO">AUTO</option>
-              <option value="RANDOM">RANDOM</option>
-              <option value="FIRST">FIRST</option>
-            </select>
-          </label>
-        </div>
-
-        <div style={styles.row}>
-          <button
-            style={styles.btn}
-            onClick={() => handleAction('debug-bot-config', {
-              settings: {
-                autoPick: botAutoPick,
-                decisionDelayMs: Number(botDelayMs),
-                preBetMode: botPreBetMode,
-                positionMode: botPositionMode,
-                bettingMode: botBettingMode,
-                cascadeMode: botCascadeMode,
-                voteMode: botVoteMode,
-              }
-            })}
-          >
-            Apply Bot Settings
-          </button>
-          <button style={{ ...styles.smallBtn, background: '#333', color: '#ddd' }} onClick={() => handleAction('debug-run-bot-step')}>
-            Run One Bot Step
-          </button>
-        </div>
+        )}
       </div>
 
       {/* ── DANGER ZONE ── */}
@@ -562,6 +592,52 @@ const styles = {
     gap: 10,
   },
   sectionTitle: { fontSize: 13, fontWeight: 'bold', color: '#f0c040', textTransform: 'uppercase', letterSpacing: 1 },
+  panelToggleBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    width: '100%',
+    background: '#151515',
+    border: '1px solid #262626',
+    borderRadius: 6,
+    padding: '10px 12px',
+    cursor: 'pointer',
+  },
+  panelToggleIcon: {
+    color: '#888',
+    fontSize: 14,
+    lineHeight: 1,
+  },
+  debugPanelBody: {
+    marginTop: 10,
+    border: '1px solid #222',
+    borderRadius: 6,
+    padding: 10,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+    background: '#111',
+  },
+  subPanelToggleBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    width: '100%',
+    background: '#171717',
+    border: '1px solid #2a2a2a',
+    borderRadius: 6,
+    padding: '8px 10px',
+    cursor: 'pointer',
+  },
+  subPanelTitle: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#f0c040',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
   hint: { fontSize: 13, color: '#aaa' },
   row: { display: 'flex', alignItems: 'center', gap: 10 },
   rowWrap: { display: 'flex', flexWrap: 'wrap', gap: 10 },
@@ -575,6 +651,10 @@ const styles = {
     borderRadius: 4,
     fontSize: 14,
     width: 100,
+  },
+  inputDisabled: {
+    opacity: 0.7,
+    cursor: 'not-allowed',
   },
   inputWide: {
     background: '#222',
