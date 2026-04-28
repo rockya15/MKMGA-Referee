@@ -1,0 +1,19 @@
+MKMGA RACE SUMMARY
+Saved: 2026-04-28T19:30:43.735Z
+Race Number: 1
+Result: N/A
+Stage: LOBBY
+Pot Remaining: $0.00
+
+Winners (0): None
+
+Players (sorted by balance):
+1. Bot 1 | balance=$15.00 | start=$15.00 | net=+0.00 | in=$0.00 | positions=-
+2. Bot 2 | balance=$15.00 | start=$15.00 | net=+0.00 | in=$0.00 | positions=-
+3. Bot 3 | balance=$15.00 | start=$15.00 | net=+0.00 | in=$0.00 | positions=-
+4. Bot 4 | balance=$15.00 | start=$15.00 | net=+0.00 | in=$0.00 | positions=-
+5. Bot 5 | balance=$15.00 | start=$15.00 | net=+0.00 | in=$0.00 | positions=-
+6. Bot 6 | balance=$15.00 | start=$15.00 | net=+0.00 | in=$0.00 | positions=-
+7. Bot 7 | balance=$15.00 | start=$15.00 | net=+0.00 | in=$0.00 | positions=-
+8. Bot 8 | balance=$15.00 | start=$15.00 | net=+0.00 | in=$0.00 | positions=-
+9. Rocky | balance=$15.00 | start=$15.00 | net=+0.00 | in=$0.00 | positions=-

@@ -48,6 +48,51 @@ The following items are now implemented in code (client + server):
 - **Wheel visuals**
   - Position-assignment wheel now uses each player's `favoriteColor` for segments (validated hex, safe fallback color)
 
+## Update Log (Apr 28, 2026)
+
+The following additions/changes were implemented today:
+
+- **Host action reliability + elimination flow**
+  - Host action handling now normalizes incoming action text (`trim + lowercase`) before routing.
+  - Manual elimination in host controls now uses socket ack/callback confirmation, so success only displays when server confirms the action.
+
+- **System debug channel controls (host controls)**
+  - Added predefined system debug channels:
+    - `cascade`, `bots`, `position`, `timers`, `betting`, `connections`, `leaderboard-scroll`
+  - All channels default to `OFF`.
+  - Host controls now shows button toggles for channels and relays only enabled channels.
+
+- **Server-side debug routing instrumentation**
+  - Added `serverDebug(channel, msg)` helper in `server/src/index.js`.
+  - Replaced key categorized server logs (`cascade`, `position`, `bots`, `betting`, `connections`) to route through channel gating.
+  - `timerManager` now accepts a logger callback and routes timer logs through the `timers` channel.
+
+- **Host controls debug console rendering and behavior**
+  - Debug rows now render clean message format for server-originated entries:
+    - `[HH:MM:SS] [channel] message`
+  - Leaderboard telemetry fallback format is retained for structured telemetry payloads.
+  - Debug print box now auto-scrolls to bottom as new lines arrive.
+
+- **Elimination screen polish**
+  - Removed the border around the elimination GIF in player view.
+
+- **No-Revive system rules and UI**
+  - Added persistent `noRevive` player state.
+  - Any successfully revived player is now marked `NO REVIVE`.
+  - When alive players are final 4 or fewer, all players are marked `NO REVIVE`.
+  - If a player has `NO REVIVE` and is eliminated, they bypass pending resurrection and become permanently eliminated.
+  - Host controls no longer shows resurrection decision controls for `NO REVIVE` players.
+
+- **Host controls resurrection UX**
+  - Pending Resurrection Decisions list now uses clickable player-name pills.
+  - Clicking a name opens/focuses the Players panel and scrolls to that player card.
+  - Pre-bet readiness line changed to:
+    - `X players paid, X players skipped, X players awaiting resurrection`
+
+- **Leaderboard player tags**
+  - Added `NO REVIVE` player tag on leaderboard rows (next to existing token-state tags).
+  - Moved player tags (`NO TOKEN`, `SKIPPED`/`FOLDED`, `NO REVIVE`) to the left of the money value so balance always stays right-aligned.
+
 ---
 
 ## Agent Tooling Reference

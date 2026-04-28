@@ -18,6 +18,7 @@ const POSITIONS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'
 const GENTLE_DNF_SLOTS = [1, 2, 4, 8, 13];
 const HARSH_DNF_SLOTS = [4, 8, 13];
 const DEFAULT_FAVORITE_COLOR = '#2a2a4a';
+const RESURRECTION_BASE_CASH = 1;
 
 function normalizeFavoriteColor(value) {
   const raw = String(value || '').trim();
@@ -35,7 +36,8 @@ class GameState {
     this.players = [];
     this.hostSettings = {
       maxCashCap: null,
-      lobbyOpen: false
+      lobbyOpen: false,
+      resurrectionBaseCash: RESURRECTION_BASE_CASH,
     };
     this.raceNumber = 1;
     this.pot = 0;
@@ -82,9 +84,18 @@ class GameState {
       ? merged.players.map((player) => ({
         ...player,
         favoriteColor: normalizeFavoriteColor(player.favoriteColor),
+        eliminationState: String(player?.eliminationState || 'alive'),
+        noRevive: Boolean(player?.noRevive),
+        eliminationSummary: player?.eliminationSummary && typeof player.eliminationSummary === 'object'
+          ? player.eliminationSummary
+          : null,
       }))
       : [];
-    this.hostSettings = merged.hostSettings || { maxCashCap: null, lobbyOpen: false };
+    this.hostSettings = merged.hostSettings || { maxCashCap: null, lobbyOpen: false, resurrectionBaseCash: RESURRECTION_BASE_CASH };
+    if (!Number.isFinite(Number(this.hostSettings.resurrectionBaseCash))) {
+      this.hostSettings.resurrectionBaseCash = RESURRECTION_BASE_CASH;
+    }
+    this.hostSettings.resurrectionBaseCash = this.roundToQuarter(Math.max(0.25, Number(this.hostSettings.resurrectionBaseCash)));
     this.raceNumber = Number.isFinite(merged.raceNumber) ? merged.raceNumber : 1;
     this.pot = Number.isFinite(merged.pot) ? merged.pot : 0;
     this.wheelOrder = Array.isArray(merged.wheelOrder) ? merged.wheelOrder : [];
@@ -93,6 +104,7 @@ class GameState {
     this.bettingState = merged.bettingState || this.createEmptyBettingState();
     this.raceResult = merged.raceResult || null;
     this.preservePositionsNextRace = Boolean(merged.preservePositionsNextRace);
+    this.updateEliminationStates();
 
     return { success: true };
   }
@@ -134,7 +146,58 @@ class GameState {
   }
 
   getAlivePlayers() {
-    return this.players.filter((player) => player.balance > 0);
+    return this.players.filter((player) => player.balance > 0 && player.eliminationState !== 'failed_resurrection');
+  }
+
+  getPendingResurrectionPlayers() {
+    return this.players.filter((player) => player.eliminationState === 'pending_resurrection');
+  }
+
+  hasPendingResurrectionPlayers() {
+    return this.getPendingResurrectionPlayers().length > 0;
+  }
+
+  isNoRevivePlayer(player) {
+    return Boolean(player?.noRevive);
+  }
+
+  buildEliminationSummary(playerId, player) {
+    const outlivedPlayers = this.players.filter((p) => p.id !== playerId && p.balance <= 0).length;
+    return {
+      survivedRaces: Math.max(0, Number(this.raceNumber || 1) - 1),
+      outlivedPlayers,
+      gambledAway: this.roundToQuarter(Math.max(0, Number(player.startingBalance || 0) - Number(player.balance || 0))),
+    };
+  }
+
+  applyNoRevivePolicy() {
+    const aliveCount = this.players.filter((player) => player.balance > 0 && player.eliminationState !== 'failed_resurrection').length;
+    if (aliveCount <= 4) {
+      this.players.forEach((player) => {
+        player.noRevive = true;
+      });
+    }
+  }
+
+  updateEliminationStates() {
+    this.applyNoRevivePolicy();
+
+    this.players.forEach((player) => {
+      if (player.eliminationState === 'failed_resurrection') {
+        return;
+      }
+
+      if (player.balance <= 0 && !player.paidEntry) {
+        if (this.isNoRevivePlayer(player)) {
+          player.eliminationState = 'failed_resurrection';
+          player.eliminationSummary = this.buildEliminationSummary(player.id, player);
+        } else {
+          player.eliminationState = 'pending_resurrection';
+        }
+      } else if (player.balance > 0) {
+        player.eliminationState = 'alive';
+      }
+    });
   }
 
   getDisplayNameTaken(displayName, exceptPlayerId = null) {
@@ -204,6 +267,9 @@ class GameState {
       isBot: Boolean(playerData.isBot),
       favoriteColor,
       profileImageUrl: String(playerData.profileImageUrl || '').trim() || null,
+      eliminationState: 'alive',
+      noRevive: false,
+      eliminationSummary: null,
       passwordHash,
       salt
     };
@@ -301,7 +367,112 @@ class GameState {
     const val = Number(newBalance);
     if (!Number.isFinite(val) || val < 0) return { error: 'Balance must be a non-negative number.' };
     player.balance = this.roundToQuarter(val);
+    this.updateEliminationStates();
     return { success: true };
+  }
+
+  adminEliminatePlayer(playerId) {
+    const player = this.getPlayerById(playerId);
+    if (!player) return { error: 'Player not found.' };
+    if (player.eliminationState === 'failed_resurrection') {
+      return { error: 'Player is already permanently eliminated.' };
+    }
+
+    // Release any currently assigned exclusive slots and remove from active draft order.
+    if (this.positionDraft) {
+      const draft = this.positionDraft;
+      if (player.positions) {
+        for (const pos of player.positions) {
+          if (draft.occupiedPositions?.[pos] === playerId) {
+            delete draft.occupiedPositions[pos];
+          }
+        }
+      }
+
+      delete draft.remainingByPlayer?.[playerId];
+      this.wheelOrder = (this.wheelOrder || []).filter((id) => id !== playerId);
+
+      if (draft.cascadeChain?.pendingDisplacedId === playerId || draft.cascadeChain?.initiatorId === playerId) {
+        draft.cascadeChain = null;
+        draft.cascadeChainSpent = false;
+      }
+
+      if (draft.currentPlayerIndex >= this.wheelOrder.length) {
+        draft.currentPlayerIndex = Math.max(0, this.wheelOrder.length - 1);
+      }
+    }
+
+    // Remove from any current betting round so action queues cannot get stuck.
+    if (this.bettingState) {
+      this.bettingState.actionQueue = (this.bettingState.actionQueue || []).filter((id) => id !== playerId);
+      this.bettingState.playersInRound = (this.bettingState.playersInRound || []).filter((id) => id !== playerId);
+      delete this.bettingState.raiseLockedPlayers?.[playerId];
+    }
+
+    player.balance = 0;
+    player.paidEntry = false;
+    player.skippedRace = false;
+    player.folded = false;
+    player.allIn = false;
+    player.roundBet = 0;
+    player.contributedThisRace = 0;
+    player.positions = [];
+
+    // Apply no-revive lock immediately if this elimination leaves 4 or fewer alive players.
+    this.applyNoRevivePolicy();
+
+    if (this.isNoRevivePlayer(player)) {
+      player.eliminationState = 'failed_resurrection';
+      player.eliminationSummary = this.buildEliminationSummary(player.id, player);
+    } else {
+      player.eliminationState = 'pending_resurrection';
+      player.eliminationSummary = null;
+    }
+
+    return { success: true, displayName: player.displayName };
+  }
+
+  adminResolveResurrection(playerId, outcome) {
+    const player = this.getPlayerById(playerId);
+    if (!player) return { error: 'Player not found.' };
+    if (player.eliminationState !== 'pending_resurrection') {
+      return { error: 'Player does not have a pending resurrection.' };
+    }
+
+    const normalized = String(outcome || '').toLowerCase();
+    if (normalized === 'success') {
+      if (this.isNoRevivePlayer(player)) {
+        return { error: 'This player is not eligible for revival.' };
+      }
+      const baseCash = this.roundToQuarter(Math.max(0.25, Number(this.hostSettings?.resurrectionBaseCash ?? RESURRECTION_BASE_CASH)));
+      player.balance = baseCash;
+      player.paidEntry = false;
+      player.skippedRace = false;
+      player.folded = false;
+      player.allIn = false;
+      player.roundBet = 0;
+      player.contributedThisRace = 0;
+      player.eliminationState = 'alive';
+      player.noRevive = true;
+      player.eliminationSummary = null;
+      this.applyNoRevivePolicy();
+      return { success: true, outcome: 'success' };
+    }
+
+    if (normalized === 'failed') {
+      player.eliminationState = 'failed_resurrection';
+      player.eliminationSummary = this.buildEliminationSummary(playerId, player);
+      player.paidEntry = false;
+      player.skippedRace = false;
+      player.folded = false;
+      player.allIn = false;
+      player.roundBet = 0;
+      player.contributedThisRace = 0;
+      this.applyNoRevivePolicy();
+      return { success: true, outcome: 'failed' };
+    }
+
+    return { error: 'Invalid resurrection outcome.' };
   }
 
   adminSetPositions(playerId, positions) {
@@ -336,6 +507,7 @@ class GameState {
     }
     this.hostSettings.maxCashCap = this.roundToQuarter(cap);
     this.hostSettings.lobbyOpen = true;
+    this.hostSettings.resurrectionBaseCash = this.roundToQuarter(Math.max(0.25, Number(this.hostSettings?.resurrectionBaseCash ?? RESURRECTION_BASE_CASH)));
     this.setStage(STAGES.LOBBY);
     return { success: true };
   }
@@ -363,6 +535,8 @@ class GameState {
         player.positions = [];
       }
     });
+
+    this.updateEliminationStates();
 
     this.positionDraft = null;
     this.bettingState = this.createEmptyBettingState();
@@ -805,6 +979,8 @@ class GameState {
 
     this.setStage(STAGES.PAYOUT);
 
+    this.updateEliminationStates();
+
     const alive = this.getAlivePlayers();
     if (alive.length <= 1) {
       this.setStage(STAGES.GAME_OVER);
@@ -845,13 +1021,15 @@ class GameState {
       }
     });
 
+    this.updateEliminationStates();
+
     return { success: true };
   }
 
   resetGame() {
     this.currentStage = STAGES.LOBBY;
     this.players = [];
-    this.hostSettings = { maxCashCap: null, lobbyOpen: false };
+    this.hostSettings = { maxCashCap: null, lobbyOpen: false, resurrectionBaseCash: RESURRECTION_BASE_CASH };
     this.raceNumber = 1;
     this.pot = 0;
     this.wheelOrder = [];

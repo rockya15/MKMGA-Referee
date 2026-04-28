@@ -1,7 +1,7 @@
 const ALL_POSITIONS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', 'DNF'];
 
 class TimerManager {
-  constructor(io, gameState, bettingEngine, onVoteResolved, onPositionTimeout, onCascadeResponseTimeout) {
+  constructor(io, gameState, bettingEngine, onVoteResolved, onPositionTimeout, onCascadeResponseTimeout, logger) {
     this.io = io;
     this.gameState = gameState;
     this.bettingEngine = bettingEngine;
@@ -18,6 +18,12 @@ class TimerManager {
     this.positionVoteTickInterval = null;
     this.cascadeResponseVoteSession = null;
     this.cascadeResponseVoteTickInterval = null;
+    this._serverLog = typeof logger === 'function' ? logger : null;
+  }
+
+  _log(msg) {
+    console.log(msg);
+    if (this._serverLog) this._serverLog('timers', msg);
   }
 
   // Start a countdown timer for a player.
@@ -30,14 +36,14 @@ class TimerManager {
     this.timeLeft = duration !== undefined ? duration : (mode === 'position' ? 30 : 60);
     this.initialDuration = this.timeLeft;
 
-    console.log(`[TimerManager] startTimer — player=${playerId} mode=${mode} duration=${this.timeLeft}s`);
+    this._log(`[TimerManager] startTimer — player=${playerId} mode=${mode} duration=${this.timeLeft}s`);
     this.io.emit('timer-update', { playerId, timeLeft: this.timeLeft, mode: this.timerMode });
 
     this.currentTimer = setInterval(() => {
       try {
         this.timeLeft--;
         if (this.timeLeft % 10 === 0 || this.timeLeft <= 5) {
-          console.log(`[TimerManager] tick — player=${playerId} timeLeft=${this.timeLeft}s`);
+          this._log(`[TimerManager] tick — player=${playerId} timeLeft=${this.timeLeft}s`);
         }
         this.io.emit('timer-update', { playerId, timeLeft: this.timeLeft, mode: this.timerMode });
         if (this.timeLeft <= 0) {
@@ -54,7 +60,7 @@ class TimerManager {
     if (!this.currentTimer || !this.timeoutPlayer) return;
     const cap = this.initialDuration ?? this.timeLeft;
     this.timeLeft = Math.min(this.timeLeft + seconds, cap);
-    console.log(`[TimerManager] addTime +${seconds}s — player=${this.timeoutPlayer} newTotal=${this.timeLeft}s (cap=${cap}s)`);
+    this._log(`[TimerManager] addTime +${seconds}s — player=${this.timeoutPlayer} newTotal=${this.timeLeft}s (cap=${cap}s)`);
     this.io.emit('timer-update', {
       playerId: this.timeoutPlayer,
       timeLeft: this.timeLeft,
@@ -74,7 +80,7 @@ class TimerManager {
 
   // Full reset: stop all timers and clear state.
   clearTimer() {
-    console.log(`[TimerManager] clearTimer — was tracking player=${this.timeoutPlayer}`);
+    this._log(`[TimerManager] clearTimer — was tracking player=${this.timeoutPlayer}`);
     this._stopInterval();
     this._stopVoteTick();
     if (this.voteSession) {
@@ -97,7 +103,7 @@ class TimerManager {
   }
 
   handleTimeout() {
-    console.log(`[TimerManager] TIMEOUT — player=${this.timeoutPlayer} mode=${this.timerMode}`);
+    this._log(`[TimerManager] TIMEOUT — player=${this.timeoutPlayer} mode=${this.timerMode}`);
     this._stopInterval();
     if (this.timerMode === 'position') {
       this.handlePositionTimeout();
@@ -110,7 +116,7 @@ class TimerManager {
 
   handlePositionTimeout() {
     // Keep this.timeoutPlayer alive — startPositionGroupVote needs it
-    console.log(`[TimerManager] starting position group vote for player=${this.timeoutPlayer}`);
+    this._log(`[TimerManager] starting position group vote for player=${this.timeoutPlayer}`);
     // Clear the countdown UI before showing the vote
     this.io.emit('timer-clear');
     this.startPositionGroupVote();
@@ -150,7 +156,7 @@ class TimerManager {
       }, 30000),
     };
 
-    console.log(`[TimerManager] position-vote-start — player=${playerId} picks=${picksNeeded} voters=${voterIds.length}`);
+    this._log(`[TimerManager] position-vote-start — player=${playerId} picks=${picksNeeded} voters=${voterIds.length}`);
     this.io.emit('position-vote-start', {
       timedOutPlayer: playerId,
       voters: voterIds,
@@ -236,7 +242,7 @@ class TimerManager {
       }
     }
 
-    console.log(`[TimerManager] position-vote-result — player=${timedOutPlayer} assigned=${assigned.join(',')}`);
+    this._log(`[TimerManager] position-vote-result — player=${timedOutPlayer} assigned=${assigned.join(',')}`);
     this.io.emit('position-vote-result', {
       timedOutPlayer,
       assignedPositions: assigned,
@@ -278,7 +284,7 @@ class TimerManager {
 
   // ── Cascade-response timeout & vote ──────────────────────────────────────
   handleCascadeResponseTimeout() {
-    console.log(`[TimerManager] cascade-response TIMEOUT — player=${this.timeoutPlayer}`);
+    this._log(`[TimerManager] cascade-response TIMEOUT — player=${this.timeoutPlayer}`);
     this.io.emit('timer-clear');
     this.startCascadeResponseGroupVote();
   }
@@ -301,7 +307,7 @@ class TimerManager {
       }, 30000),
     };
 
-    console.log(`[TimerManager] cascade-response-vote-start — player=${playerId} voters=${voterIds.length}`);
+    this._log(`[TimerManager] cascade-response-vote-start — player=${playerId} voters=${voterIds.length}`);
     this.io.emit('cascade-response-vote-start', {
       timedOutPlayer: playerId,
       voters: voterIds,
@@ -357,7 +363,7 @@ class TimerManager {
     // cascade wins on tie (gives displaced player the benefit of the doubt)
     const doCascade = cascadeVotes >= acceptVotes;
 
-    console.log(`[TimerManager] cascade-response-vote-result — player=${timedOutPlayer} doCascade=${doCascade} (${cascadeVotes} cascade / ${acceptVotes} accept)`);
+    this._log(`[TimerManager] cascade-response-vote-result — player=${timedOutPlayer} doCascade=${doCascade} (${cascadeVotes} cascade / ${acceptVotes} accept)`);
     this.io.emit('cascade-response-vote-result', { timedOutPlayer, doCascade, cascadeVotes, acceptVotes });
 
     this.cascadeResponseVoteSession = null;

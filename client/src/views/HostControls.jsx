@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 const POSITIONS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', 'DNF'];
 
 // ── PlayerCard ──────────────────────────────────────────────────────────────
-function PlayerCard({ p, gameState, socket, onError, onSuccess }) {
+function PlayerCard({ p, gameState, socket, onError, onSuccess, resurrectionBaseCash, onHostAction }) {
   const [expanded, setExpanded] = useState(false);
   const [balanceInput, setBalanceInput] = useState('');
   const [selectedPositions, setSelectedPositions] = useState(p.positions ?? []);
@@ -38,7 +38,13 @@ function PlayerCard({ p, gameState, socket, onError, onSuccess }) {
   const { currentStage } = gameState;
   let statusColor = '#555';
   let statusLabel = '';
-  if (currentStage === 'PRE_BET') {
+  if (p.eliminationState === 'pending_resurrection') {
+    statusColor = '#f0c040';
+    statusLabel = 'REVIVE?';
+  } else if (p.eliminationState === 'failed_resurrection') {
+    statusColor = '#e74c3c';
+    statusLabel = 'OUT';
+  } else if (currentStage === 'PRE_BET') {
     if (p.balance <= 0) { statusColor = '#555'; statusLabel = 'elim'; }
     else if (p.paidEntry) { statusColor = '#2ecc71'; statusLabel = 'PAID'; }
     else if (p.skippedRace) { statusColor = '#e67e22'; statusLabel = 'SKIP'; }
@@ -57,6 +63,7 @@ function PlayerCard({ p, gameState, socket, onError, onSuccess }) {
           {statusLabel && <span style={{ ...styles.playerStatus, color: statusColor }}>{statusLabel}</span>}
           {!p.connected && <span style={styles.dcBadge}>DC</span>}
           {!p.skipFoldTokenAvailable && <span style={styles.noToken}>NO TOKEN</span>}
+          {p.noRevive && <span style={styles.noRevive}>NO REVIVE</span>}
           {p.positions?.length > 0 && (
             <span style={styles.positions}>[{p.positions.join(', ')}]</span>
           )}
@@ -141,6 +148,53 @@ function PlayerCard({ p, gameState, socket, onError, onSuccess }) {
               </div>
             )}
           </div>
+
+          {p.eliminationState === 'alive' && (
+            <div style={styles.controlGroup}>
+              <div style={styles.controlLabel}>Elimination</div>
+              <button
+                style={{ ...styles.smallBtn, background: '#5a3a00', color: '#f0c040' }}
+                onClick={() => {
+                  onHostAction('manual-eliminate', { playerId: p.id }, (response) => {
+                    if (response?.error) {
+                      onError(response.error);
+                      return;
+                    }
+                    onSuccess(`${p.displayName} has been manually eliminated.`);
+                  });
+                }}
+              >
+                Eliminate Player
+              </button>
+            </div>
+          )}
+
+          {p.eliminationState === 'pending_resurrection' && !p.noRevive && (
+            <div style={styles.controlGroup}>
+              <div style={styles.controlLabel}>Resurrection Decision</div>
+              <div style={styles.hint}>Revive with ${Number(resurrectionBaseCash).toFixed(2)} base cash or mark as failed.</div>
+              <div style={styles.controlRow}>
+                <button
+                  style={{ ...styles.smallBtn, background: '#1f4d2d', color: '#c6ffd8' }}
+                  onClick={() => {
+                    adminAction('resolve-resurrection', { outcome: 'success' });
+                    onSuccess(`${p.displayName} has been revived.`);
+                  }}
+                >
+                  Revive Player
+                </button>
+                <button
+                  style={{ ...styles.smallBtn, background: '#4d1f1f', color: '#ffb6b6' }}
+                  onClick={() => {
+                    adminAction('resolve-resurrection', { outcome: 'failed' });
+                    onSuccess(`${p.displayName} failed resurrection.`);
+                  }}
+                >
+                  Fail Revival
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -168,6 +222,9 @@ function HostControls({ gameState, socket }) {
   const [errorMsg, setErrorMsg] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [pendingResurrectionPromptOpen, setPendingResurrectionPromptOpen] = useState(false);
+  const [newDebugChannel, setNewDebugChannel] = useState('');
+  const playerCardRefs = useRef(new Map());
 
   useEffect(() => {
     const onError = (msg) => {
@@ -192,9 +249,17 @@ function HostControls({ gameState, socket }) {
     };
   }, [socket]);
 
-  const handleAction = (action, data = {}) => {
+  const handleAction = (action, data = {}, onAck) => {
     setErrorMsg(null);
-    socket.emit('host-action', { action, ...data });
+    socket.emit('host-action', { action, ...data }, (response) => {
+      if (response?.error) {
+        setErrorMsg(response.error);
+        setTimeout(() => setErrorMsg(null), 4000);
+      }
+      if (typeof onAck === 'function') {
+        onAck(response);
+      }
+    });
   };
 
   const buildBotSettingsPayload = (overrides = {}) => ({
@@ -232,6 +297,7 @@ function HostControls({ gameState, socket }) {
   const { currentStage, players, pot, raceNumber, entryFee, positionDraft, wheelOrder } = gameState;
 
   const alivePlayers = players.filter((p) => p.balance > 0);
+  const pendingResurrectionPlayers = players.filter((p) => p.eliminationState === 'pending_resurrection');
   const botPlayers = players.filter((p) => p.isBot);
   const pendingPreBet = alivePlayers.filter((p) => !p.paidEntry && !p.skippedRace);
   const payingPlayers = players.filter((p) => p.paidEntry);
@@ -244,6 +310,51 @@ function HostControls({ gameState, socket }) {
   const currentPicker = players.find((p) => p.id === currentPickerId);
   const botStartingCash = String(gameState.hostSettings?.maxCashCap ?? maxCashCap);
   const botLogicDisabled = !botAutoPick;
+  const resurrectionBaseCash = Number(gameState.hostSettings?.resurrectionBaseCash ?? 1);
+  const systemDebugChannels = gameState.systemDebugPrintConfig?.channels || {};
+
+  const normalizeDebugChannel = (value) =>
+    String(value || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '-');
+
+  const toggleSystemDebugChannel = (channel) => {
+    const key = normalizeDebugChannel(channel);
+    if (!key) return;
+    handleAction('debug-system-print-set-channel', {
+      channel: key,
+      enabled: !Boolean(systemDebugChannels[key]),
+    });
+  };
+
+  const addSystemDebugChannel = () => {
+    const key = normalizeDebugChannel(newDebugChannel);
+    if (!key) {
+      setErrorMsg('Enter a channel name to add.');
+      setTimeout(() => setErrorMsg(null), 3000);
+      return;
+    }
+    handleAction('debug-system-print-set-channel', {
+      channel: key,
+      enabled: false,
+    });
+    setNewDebugChannel('');
+  };
+
+  const focusPlayerCard = (playerId) => {
+    if (!playerId) return;
+    setPlayerPanelOpen(true);
+    const scrollToCard = () => {
+      const card = playerCardRefs.current.get(playerId);
+      if (card && typeof card.scrollIntoView === 'function') {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    };
+    setTimeout(scrollToCard, 0);
+  };
+
+  const handleStartPositionAssignment = (forceIgnorePendingResurrection = false) => {
+    handleAction('start-position-assignment', { forceIgnorePendingResurrection });
+    setPendingResurrectionPromptOpen(false);
+  };
 
   useEffect(() => {
     const cfg = gameState.debugTools;
@@ -313,14 +424,6 @@ function HostControls({ gameState, socket }) {
       {errorMsg && <div style={styles.errorBanner}>{errorMsg}</div>}
       {successMsg && <div style={styles.successBanner}>{successMsg}</div>}
 
-      <div style={styles.section}>
-        <div style={styles.sectionTitle}>Data Archive</div>
-        <div style={styles.hint}>Save a permanent copy of the current race/game state to a new timestamped folder.</div>
-        <button style={styles.btn} onClick={handleSaveRaceData}>
-          Save Current Race Data
-        </button>
-      </div>
-
       {/* ── LOBBY ── */}
       {currentStage === 'LOBBY' && !gameState.hostSettings.lobbyOpen && (
         <div style={styles.section}>
@@ -361,9 +464,7 @@ function HostControls({ gameState, socket }) {
 
           <div style={styles.readyRow}>
             <span style={{ color: allReady ? '#2ecc71' : '#e67e22' }}>
-              {allReady
-                ? `✓ All ${alivePlayers.length} players ready (${payingPlayers.length} paying)`
-                : `Waiting on ${pendingPreBet.length} player(s)…`}
+              {`${payingPlayers.length} players paid, ${players.filter((p) => p.skippedRace).length} players skipped, ${pendingResurrectionPlayers.length} players awaiting resurrection`}
             </span>
           </div>
 
@@ -377,10 +478,45 @@ function HostControls({ gameState, socket }) {
 
           <button
             style={{ ...styles.btn, ...(allReady ? {} : styles.btnWarn) }}
-            onClick={() => handleAction('start-position-assignment')}
+            onClick={() => {
+              if (pendingResurrectionPlayers.length > 0) {
+                setPendingResurrectionPromptOpen(true);
+                return;
+              }
+              handleStartPositionAssignment(false);
+            }}
           >
             {allReady ? 'Spin the Wheel →' : 'Force Start Position Assignment'}
           </button>
+
+          {pendingResurrectionPromptOpen && (
+            <div style={styles.warningModal}>
+              <div style={styles.warningModalTitle}>Pending Resurrection Decisions</div>
+              <div style={styles.warningModalText}>
+                These players are eliminated and still waiting for a resurrection outcome:
+              </div>
+              <div style={styles.pendingList}>
+                {pendingResurrectionPlayers.map((p) => (
+                  <button
+                    key={p.id}
+                    style={styles.pendingPillButton}
+                    onClick={() => focusPlayerCard(p.id)}
+                    title={`Focus ${p.displayName} in Players panel`}
+                  >
+                    {p.displayName}
+                  </button>
+                ))}
+              </div>
+              <div style={styles.warningModalActions}>
+                <button style={styles.btn} onClick={() => setPendingResurrectionPromptOpen(false)}>
+                  Go Back
+                </button>
+                <button style={{ ...styles.btn, ...styles.btnWarn }} onClick={() => handleStartPositionAssignment(true)}>
+                  Ignore And Continue
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -482,14 +618,20 @@ function HostControls({ gameState, socket }) {
             {players.length === 0 && <div style={styles.hint}>No players yet.</div>}
             <div style={styles.playerGrid}>
               {players.map((p) => (
-                <PlayerCard
-                  key={p.id}
-                  p={p}
-                  gameState={gameState}
-                  socket={socket}
-                  onError={(msg) => setErrorMsg(msg)}
-                  onSuccess={(msg) => { setSuccessMsg(msg); setTimeout(() => setSuccessMsg(null), 3000); }}
-                />
+                <div key={p.id} ref={(el) => {
+                  if (el) playerCardRefs.current.set(p.id, el);
+                  else playerCardRefs.current.delete(p.id);
+                }}>
+                  <PlayerCard
+                    p={p}
+                    gameState={gameState}
+                    socket={socket}
+                    resurrectionBaseCash={resurrectionBaseCash}
+                    onHostAction={handleAction}
+                    onError={(msg) => setErrorMsg(msg)}
+                    onSuccess={(msg) => { setSuccessMsg(msg); setTimeout(() => setSuccessMsg(null), 3000); }}
+                  />
+                </div>
               ))}
             </div>
           </>
@@ -518,16 +660,46 @@ function HostControls({ gameState, socket }) {
 
             {debugSystemOpen && (
               <>
-                <div style={styles.hint}>Latest leaderboard telemetry from host view ({systemDebugPrints.length} lines)</div>
-                <div style={styles.debugPrintBox}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+                  {Object.keys(systemDebugChannels).sort().map((channel) => {
+                    const isOn = Boolean(systemDebugChannels[channel]);
+                    return (
+                      <button
+                        key={channel}
+                        style={{
+                          ...styles.debugToggleBtn,
+                          ...(isOn ? styles.debugToggleBtnOn : styles.debugToggleBtnOff),
+                        }}
+                        onClick={() => toggleSystemDebugChannel(channel)}
+                      >
+                        {channel}: {isOn ? 'ON' : 'OFF'}
+                      </button>
+                    );
+                  })}
+                  <button
+                    style={{ ...styles.smallBtn, background: '#5a1a1a', color: '#ffb3b3', marginLeft: 'auto' }}
+                    onClick={() => handleAction('debug-clear-system-prints')}
+                  >
+                    Clear
+                  </button>
+                </div>
+                <div ref={(el) => { if (el) el.scrollTop = el.scrollHeight; }} style={styles.debugPrintBox}>
                   {systemDebugPrints.length === 0 ? (
                     <div style={styles.debugPrintRow}>No debug prints yet. Open host view and wait a second.</div>
                   ) : (
-                    systemDebugPrints.map((entry, idx) => (
-                      <div key={`${entry.at ?? 't'}-${idx}`} style={styles.debugPrintRow}>
-                        [{entry.at?.slice(11, 19) ?? '--:--:--'}] {entry.source ?? 'unknown'} | v={entry.algoVersion ?? '-'} | stage={entry.stage ?? ''} | phase={entry.phase ?? ''} | enabled={String(Boolean(entry.enabled))} | top={Number(entry.scrollTop ?? 0).toFixed(1)} | max={Number(entry.maxScroll ?? 0).toFixed(1)} | dir={entry.direction === -1 ? 'up' : 'down'} | focus={entry.focusPlayerId ?? '-'} | pause={entry.edgePauseMsRemaining ?? 0}ms | suspend={entry.suspendMsRemaining ?? 0}ms
-                      </div>
-                    ))
+                    systemDebugPrints.map((entry, idx) => {
+                      const ts = entry.at?.slice(11, 19) ?? '--:--:--';
+                      const ch = entry.channel ?? entry.source ?? 'unknown';
+                      // Server debug messages have a .msg field; leaderboard telemetry has scroll fields
+                      const line = entry.msg
+                        ? `[${ts}] [${ch}] ${entry.msg}`
+                        : `[${ts}] [${ch}] v=${entry.algoVersion ?? '-'} stage=${entry.stage ?? ''} phase=${entry.phase ?? ''} enabled=${String(Boolean(entry.enabled))} top=${Number(entry.scrollTop ?? 0).toFixed(1)} max=${Number(entry.maxScroll ?? 0).toFixed(1)} dir=${entry.direction === -1 ? 'up' : 'down'} focus=${entry.focusPlayerId ?? '-'} pause=${entry.edgePauseMsRemaining ?? 0}ms suspend=${entry.suspendMsRemaining ?? 0}ms`;
+                      return (
+                        <div key={`${entry.at ?? 't'}-${idx}`} style={styles.debugPrintRow}>
+                          {line}
+                        </div>
+                      );
+                    })
                   )}
                 </div>
               </>
@@ -648,6 +820,14 @@ function HostControls({ gameState, socket }) {
             )}
           </div>
         )}
+      </div>
+
+      <div style={styles.section}>
+        <div style={styles.sectionTitle}>Data Archive</div>
+        <div style={styles.hint}>Save a permanent copy of the current race/game state to a new timestamped folder.</div>
+        <button style={styles.btn} onClick={handleSaveRaceData}>
+          Save Current Race Data
+        </button>
       </div>
 
       {/* ── DANGER ZONE ── */}
@@ -793,6 +973,54 @@ const styles = {
     flexDirection: 'column',
     gap: 4,
   },
+  debugToggleRow: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  debugChannelBuilderRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  debugChannelItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+  },
+  debugToggleBtn: {
+    border: '1px solid #3a3a3a',
+    borderRadius: 999,
+    background: '#1a1a1a',
+    color: '#dbe6f5',
+    fontSize: 11,
+    padding: '4px 10px',
+    fontWeight: 'bold',
+    cursor: 'pointer',
+  },
+  debugToggleBtnOn: {
+    border: '1px solid #2a7a4f',
+    background: '#123022',
+    color: '#9bf1c8',
+  },
+  debugToggleBtnOff: {
+    border: '1px solid #5a2a2a',
+    background: '#2a1717',
+    color: '#f2abab',
+  },
+  debugToggleRemoveBtn: {
+    border: '1px solid #6b2525',
+    background: '#2a1212',
+    color: '#ffb3b3',
+    borderRadius: 999,
+    cursor: 'pointer',
+    width: 22,
+    height: 22,
+    lineHeight: '18px',
+    fontWeight: 'bold',
+    padding: 0,
+  },
   debugPrintRow: {
     fontFamily: "Consolas, 'Courier New', monospace",
     fontSize: 11,
@@ -892,6 +1120,31 @@ const styles = {
     background: '#5a3a00',
     color: '#f0c040',
   },
+  warningModal: {
+    marginTop: 8,
+    background: '#221707',
+    border: '1px solid #8b5a17',
+    borderRadius: 8,
+    padding: 12,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+  },
+  warningModalTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#f0c040',
+  },
+  warningModalText: {
+    fontSize: 13,
+    color: '#d9c39a',
+    lineHeight: 1.4,
+  },
+  warningModalActions: {
+    display: 'flex',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
   readyRow: { fontSize: 14 },
   pendingList: { display: 'flex', gap: 6, flexWrap: 'wrap' },
   pendingPill: {
@@ -900,6 +1153,15 @@ const styles = {
     padding: '4px 10px',
     borderRadius: 12,
     fontSize: 12,
+  },
+  pendingPillButton: {
+    background: '#3a1a1a',
+    color: '#f66',
+    padding: '4px 10px',
+    borderRadius: 12,
+    fontSize: 12,
+    border: '1px solid #6a2a2a',
+    cursor: 'pointer',
   },
   placementGrid: {
     display: 'grid',
@@ -1048,6 +1310,7 @@ const styles = {
   playerStatus: { fontSize: 10, fontWeight: 'bold' },
   dcBadge: { background: '#333', color: '#888', fontSize: 10, padding: '1px 5px', borderRadius: 3 },
   noToken: { background: '#3a1a1a', color: '#f66', fontSize: 10, padding: '1px 5px', borderRadius: 3 },
+  noRevive: { background: '#3a2a1a', color: '#f0c040', fontSize: 10, padding: '1px 5px', borderRadius: 3 },
   positions: { color: '#888', fontSize: 11 },
 };
 

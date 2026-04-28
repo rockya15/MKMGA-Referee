@@ -43,6 +43,9 @@ function HostView({ gameState, socket }) {
   const cascadeSpinStartTimeoutRef = useRef(null);
   const cascadeResultHoldTimeoutRef = useRef(null);
 
+  const [payoutTotalAmount, setPayoutTotalAmount] = useState(0);
+  const prevGameStateRef = useRef({ currentStage, players });
+
   const clearCascadeSpinStartTimeout = useCallback(() => {
     if (cascadeSpinStartTimeoutRef.current) {
       clearTimeout(cascadeSpinStartTimeoutRef.current);
@@ -156,6 +159,23 @@ function HostView({ gameState, socket }) {
     clearCascadeSpinStartTimeout();
     clearCascadeResultHoldTimeout();
   }, [clearCascadeSpinStartTimeout, clearCascadeResultHoldTimeout]);
+
+  // Track total amount distributed when entering PAYOUT stage
+  useEffect(() => {
+    const prev = prevGameStateRef.current;
+    if (prev.currentStage !== 'PAYOUT' && currentStage === 'PAYOUT') {
+      const winners = players.filter(
+        (p) => p.paidEntry && !p.folded && p.positions?.includes(raceResult),
+      );
+      let totalDelta = 0;
+      winners.forEach((w) => {
+        const prevPlayer = prev.players.find((p) => p.id === w.id);
+        totalDelta += w.balance - (prevPlayer?.balance ?? w.balance);
+      });
+      setPayoutTotalAmount(Math.max(0, totalDelta));
+    }
+    prevGameStateRef.current = { currentStage, players };
+  }, [currentStage, players, raceResult]);
 
   useEffect(() => {
     const onVoteStart = (data) => {
@@ -402,6 +422,7 @@ function HostView({ gameState, socket }) {
               spinContextLine2={spinContextLine2}
               cascadePromptPlayer={cascadePromptPlayer}
               payoutWinners={payoutWinners}
+              payoutTotalAmount={payoutTotalAmount}
               getFavoriteColor={getFavoriteColor}
             />
           </AnimatedPanel>

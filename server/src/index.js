@@ -48,6 +48,11 @@ const BOT_POSITION_POST_SPIN_GRACE_MS = 1400;
 const BOT_CASCADE_POST_SPIN_GRACE_MS = 700;
 const BOT_AUTOMATION_HEARTBEAT_MS = 250;
 const PRE_BET_DEBUG_LOG_PATH = path.join(__dirname, '..', 'data', 'bot-prebet-debug.log');
+// Pre-defined debug channels — all start OFF
+const KNOWN_DEBUG_CHANNELS = ['cascade', 'bots', 'position', 'timers', 'betting', 'connections', 'leaderboard-scroll'];
+const SYSTEM_DEBUG_PRINT_DEFAULT_CONFIG = {
+  channels: Object.fromEntries(KNOWN_DEBUG_CHANNELS.map((k) => [k, false])),
+};
 
 let botSettings = { ...BOT_DEFAULTS };
 let botActionTimeout = null;
@@ -59,11 +64,16 @@ let positionTimerMissingSince = 0;
 let botPositionSpinFallbackTimeout = null;
 const SYSTEM_DEBUG_PRINT_LIMIT = 200;
 let systemDebugPrints = [];
+let systemDebugPrintConfig = { ...SYSTEM_DEBUG_PRINT_DEFAULT_CONFIG };
 
 function sanitizeSystemDebugPrint(raw = {}) {
+  const source = String(raw.source || 'unknown');
+  const channelRaw = String(raw.channel || source || 'unknown');
+  const channel = channelRaw.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '-') || 'unknown';
   return {
     at: new Date().toISOString(),
-    source: String(raw.source || 'unknown'),
+    source,
+    channel,
     algoVersion: String(raw.algoVersion || ''),
     stage: String(raw.stage || ''),
     phase: String(raw.phase || ''),
@@ -84,9 +94,58 @@ function pushSystemDebugPrint(entry) {
   }
 }
 
+// Route server-side log to terminal always; relay to clients if channel is enabled.
+function serverDebug(channel, msg) {
+  console.log(msg);
+  if (!shouldRelaySystemDebugPrint({ channel })) return;
+  const entry = { at: new Date().toISOString(), source: 'server', channel, msg: String(msg) };
+  pushSystemDebugPrint(entry);
+  // io may not be defined yet at module load time — guard it
+  if (typeof io !== 'undefined') {
+    io.emit('system-debug-print', entry);
+  }
+}
+
+function sanitizeSystemDebugPrintConfig(raw = {}) {
+  const next = {
+    channels: {
+      ...(systemDebugPrintConfig?.channels || {}),
+    },
+  };
+
+  if (raw && typeof raw === 'object' && raw.channels && typeof raw.channels === 'object') {
+    for (const [name, enabled] of Object.entries(raw.channels)) {
+      const key = String(name || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '-');
+      if (!key) continue;
+      next.channels[key] = Boolean(enabled);
+    }
+  }
+
+  if (raw && typeof raw === 'object' && raw.setChannel && typeof raw.setChannel === 'object') {
+    const key = String(raw.setChannel.name || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '-');
+    if (key) {
+      next.channels[key] = Boolean(raw.setChannel.enabled);
+    }
+  }
+
+  if (raw && typeof raw === 'object' && raw.removeChannel) {
+    const key = String(raw.removeChannel || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '-');
+    if (key) {
+      delete next.channels[key];
+    }
+  }
+
+  return next;
+}
+
+function shouldRelaySystemDebugPrint(entry) {
+  const key = String(entry?.channel || entry?.source || 'unknown').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '-');
+  return Boolean(systemDebugPrintConfig?.channels?.[key]);
+}
+
 function logPreBetDebug(message) {
   const line = `[${new Date().toISOString()}] ${message}`;
-  console.warn(line);
+  serverDebug('bots', line);
   try {
     fs.appendFileSync(PRE_BET_DEBUG_LOG_PATH, `${line}\n`);
   } catch (error) {
@@ -182,7 +241,7 @@ function executeScheduledPreBetChoice(botId) {
   }
 
   if (result?.error) {
-    console.warn(`[BOTS][PRE_BET] ${bot.id} could not submit pre-bet choice: ${result.error}`);
+    serverDebug('bots', `[BOTS][PRE_BET] ${bot.id} could not submit pre-bet choice: ${result.error}`);
     return false;
   }
 
@@ -257,7 +316,7 @@ function scheduleBotPositionSpinFallback() {
     const picker = gameState.getPlayerById(pickerId);
     if (!isBotPlayer(picker)) return;
     if (hasActiveTurnTimer(pickerId, 'position')) return;
-    console.warn(`[POSITION] Bot spin fallback timer start for picker=${pickerId}.`);
+    serverDebug('position', `[POSITION] Bot spin fallback timer start for picker=${pickerId}.`);
     maybeStartPositionTimer();
   }, BOT_POSITION_SPIN_WAIT_MS);
 }
@@ -330,7 +389,7 @@ const timerManager = new TimerManager(
   (playerId, doCascade) => {
     const result = gameState.respondToDisplacedCascade(playerId, doCascade);
     if (result.error) {
-      console.error('[CASCADE] onCascadeResponseTimeout error:', result.error);
+      serverDebug('cascade', `[CASCADE] onCascadeResponseTimeout error: ${result.error}`);
       return;
     }
 
@@ -362,7 +421,9 @@ const timerManager = new TimerManager(
         maybeStartPositionTimer();
       }
     }
-  }
+  },
+  // logger — routes timerManager debug messages through the server debug channel system
+  (channel, msg) => serverDebug(channel, msg)
 );
 
 function sanitizePlayerForClient(player) {
@@ -378,6 +439,7 @@ function getClientGameState() {
   return {
     ...snapshot,
     debugTools: getBotDebugState(),
+    systemDebugPrintConfig: { ...systemDebugPrintConfig },
     players: snapshot.players.map(sanitizePlayerForClient)
   };
 }
@@ -425,7 +487,7 @@ function resolveForcedCallIfNeeded() {
 
   const result = bettingEngine.processAction(actorId, 'call');
   if (result?.error) {
-    console.warn(`[BETTING] Forced-call failed for ${actorId}: ${result.error}`);
+    serverDebug('betting', `[BETTING] Forced-call failed for ${actorId}: ${result.error}`);
     return false;
   }
 
@@ -681,15 +743,16 @@ function pickBotVote(options) {
 
 function pickBotBetAction(player) {
   const state = gameState.bettingState;
-  const currentBet = Number(state.currentBet || 0);
-  const toCall = Math.max(0, currentBet - Number(player.roundBet || 0));
+  const currentBet = roundToQuarter(Number(state.currentBet || 0));
+  const roundBet = roundToQuarter(Number(player.roundBet || 0));
+  const toCall = roundToQuarter(Math.max(0, currentBet - roundBet));
   const canFold = Boolean(player.skipFoldTokenAvailable);
   const canRaise = !state.raiseLockedPlayers?.[player.id] &&
     Number(state.betCap || 0) > currentBet &&
-    Number(player.balance || 0) + Number(player.roundBet || 0) > currentBet;
+    roundToQuarter(Number(player.balance || 0) + roundBet) > currentBet;
 
-  const minRaiseTo = Math.round((currentBet + 0.25) * 4) / 4;
-  const maxRaiseTo = Math.round((Math.min(Number(state.betCap || 0), Number(player.balance || 0) + Number(player.roundBet || 0))) * 4) / 4;
+  const minRaiseTo = roundToQuarter(currentBet + 0.25);
+  const maxRaiseTo = roundToQuarter(Math.min(Number(state.betCap || 0), Number(player.balance || 0) + roundBet));
 
   const mode = botSettings.bettingMode;
   if (mode === 'CHECK_CALL') {
@@ -736,7 +799,7 @@ function runPreBetBotBurst() {
     }
 
     if (result?.error) {
-      console.warn(`[BOTS][PRE_BET] ${target.id} could not submit pre-bet choice: ${result.error}`);
+      serverDebug('bots', `[BOTS][PRE_BET] ${target.id} could not submit pre-bet choice: ${result.error}`);
       continue;
     }
 
@@ -920,6 +983,11 @@ function runOneBotAction() {
     if (!isBotPlayer(actor)) return false;
     const decision = pickBotBetAction(actor);
     const result = bettingEngine.processAction(actor.id, decision.action, decision.amount);
+    if (!result?.error && result?.complete) {
+      // If the bot was the final actor, betting just advanced to RACE_PENDING_RESULT.
+      // Ensure the old betting timer cannot time out and open a stale vote session.
+      timerManager.clearTimer();
+    }
     return !result.error;
   }
 
@@ -1067,7 +1135,7 @@ function handleCascadeSpinConcluded(reason) {
   }
 
   if (gameState.markCascadePromptReady()) {
-    console.warn(`[CASCADE] Spin conclusion applied via ${reason}; prompt is now ready.`);
+    serverDebug('cascade', `[CASCADE] Spin conclusion applied via ${reason}; prompt is now ready.`);
     // Start 30s timer for the displaced player
     const displacedId = gameState.positionDraft?.cascadeChain?.pendingDisplacedId;
     if (displacedId) {
@@ -1087,7 +1155,7 @@ function scheduleCascadeCompletionFallback(token, timeoutMs) {
     if (expectedCascadeSpinToken !== token) {
       return;
     }
-    console.warn(`[CASCADE] Fallback completion fired for token=${token}.`);
+    serverDebug('cascade', `[CASCADE] Fallback completion fired for token=${token}.`);
     handleCascadeSpinConcluded('fallback-timeout');
   }, delayMs);
 }
@@ -1174,7 +1242,7 @@ app.post('/api/upload-profile', (req, res) => {
 
 // Socket.io connection
 io.on('connection', (socket) => {
-  console.log('A user connected:', socket.id);
+  serverDebug('connections', `A user connected: ${socket.id}`);
 
   // Send current game state
   socket.emit('game-state', getClientGameState());
@@ -1224,7 +1292,7 @@ io.on('connection', (socket) => {
     if (result.cascade) {
       const cascade = result.cascade;
       const initiator = gameState.getPlayerById(socket.id);
-      console.log('[CASCADE] Emitting cascade-spin:', { targetPosition: cascade.finalPosition, mode: cascade.mode, level: cascade.level, dnfSlots: cascade.dnfSlots, roll: cascade.roll });
+      serverDebug('cascade', `[CASCADE] Emitting cascade-spin: ${JSON.stringify({ targetPosition: cascade.finalPosition, mode: cascade.mode, level: cascade.level, dnfSlots: cascade.dnfSlots, roll: cascade.roll })}`);
       emitCascadeSpin({
         targetPosition: cascade.finalPosition,
         mode: cascade.mode,
@@ -1332,7 +1400,7 @@ io.on('connection', (socket) => {
     if (result.cascaded && result.outcome) {
       const outcome = result.outcome;
       const responder = gameState.getPlayerById(socket.id);
-      console.log('[CASCADE] Emitting cascade-spin (response):', { targetPosition: outcome.finalPosition, mode: outcome.mode, level: outcome.level, dnfSlots: outcome.dnfSlots, roll: outcome.roll });
+      serverDebug('cascade', `[CASCADE] Emitting cascade-spin (response): ${JSON.stringify({ targetPosition: outcome.finalPosition, mode: outcome.mode, level: outcome.level, dnfSlots: outcome.dnfSlots, roll: outcome.roll })}`);
       emitCascadeSpin({
         targetPosition: outcome.finalPosition,
         mode: outcome.mode,
@@ -1365,11 +1433,14 @@ io.on('connection', (socket) => {
   // Lightweight runtime diagnostics emitted by HostView and displayed in HostControls.
   socket.on('system-debug-print', (data) => {
     const entry = sanitizeSystemDebugPrint(data);
+    if (!shouldRelaySystemDebugPrint(entry)) {
+      return;
+    }
     pushSystemDebugPrint(entry);
     io.emit('system-debug-print', entry);
   });
 
-  // ── Host admin actions (kick, set-balance, set-positions) ───────────────────
+  // ── Host admin actions (kick, eliminate, set-balance, set-positions) ───────
   socket.on('host-admin', (data) => {
     const { action, playerId } = data || {};
     if (!playerId) { socket.emit('error', 'Missing playerId.'); return; }
@@ -1382,12 +1453,19 @@ io.on('connection', (socket) => {
         // Notify the kicked player's socket if still connected
         io.to(playerId).emit('kicked', { reason: 'You were removed by the host.' });
       }
+    } else if (['manual-eliminate', 'manual_eliminate', 'eliminate-player', 'eliminate'].includes(String(action || '').toLowerCase())) {
+      result = gameState.adminEliminatePlayer(playerId);
+      if (!result.error) {
+        timerManager.clearTimer();
+      }
+    } else if (action === 'resolve-resurrection') {
+      result = gameState.adminResolveResurrection(playerId, data.outcome);
     } else if (action === 'set-balance') {
       result = gameState.adminSetBalance(playerId, data.balance);
     } else if (action === 'set-positions') {
       result = gameState.adminSetPositions(playerId, data.positions);
     } else {
-      socket.emit('error', 'Unknown admin action.'); return;
+      socket.emit('error', `Unknown admin action: ${String(action ?? 'undefined')}`); return;
     }
 
     if (result.error) { socket.emit('error', result.error); return; }
@@ -1396,8 +1474,11 @@ io.on('connection', (socket) => {
 
   // Handle host actions
   socket.on('host-action', (data, ack) => {
+    const rawAction = String(data?.action || '');
+    const action = rawAction.trim().toLowerCase();
+    const actionCompact = action.replace(/[^a-z0-9]/g, '');
     let result = { success: true };
-    switch (data.action) {
+    switch (action) {
       case 'open-lobby':
         pendingPositionAssignmentFinalize = false;
         expectedCascadeSpinToken = null;
@@ -1418,6 +1499,11 @@ io.on('connection', (socket) => {
         expectedCascadeSpinToken = null;
         clearCascadeCompletionTimeout();
         clearBotPositionSpinFallback();
+        if (!Boolean(data.forceIgnorePendingResurrection) && gameState.hasPendingResurrectionPlayers()) {
+          const names = gameState.getPendingResurrectionPlayers().map((p) => p.displayName).join(', ');
+          result = { error: `Pending resurrection decisions: ${names}. Resolve them or force continue.` };
+          break;
+        }
         if (!gameState.allPreBetChoicesSubmitted()) {
           result = { error: 'Waiting for all active players to choose PAY or SKIP.' };
           break;
@@ -1441,6 +1527,19 @@ io.on('connection', (socket) => {
         break;
       case 'record-race-result':
         result = settleRaceAndPersistSummary(data.placement);
+        break;
+      case 'manual-eliminate':
+      case 'manual_eliminate':
+      case 'eliminate-player':
+      case 'eliminate':
+        if (!data.playerId) {
+          result = { error: 'Missing playerId for eliminate action.' };
+          break;
+        }
+        result = gameState.adminEliminatePlayer(data.playerId);
+        if (!result.error) {
+          timerManager.clearTimer();
+        }
         break;
       case 'save-race-data': {
         const snapshot = gameState.toSnapshot();
@@ -1488,13 +1587,46 @@ io.on('connection', (socket) => {
       case 'debug-bot-config':
         result = updateBotSettings(data.settings || {});
         break;
+      case 'debug-system-print-config':
+        systemDebugPrintConfig = sanitizeSystemDebugPrintConfig(data.settings || {});
+        result = { success: true, systemDebugPrintConfig: { ...systemDebugPrintConfig } };
+        break;
+      case 'debug-system-print-set-channel':
+        systemDebugPrintConfig = sanitizeSystemDebugPrintConfig({
+          setChannel: {
+            name: data.channel,
+            enabled: data.enabled,
+          },
+        });
+        result = { success: true, systemDebugPrintConfig: { ...systemDebugPrintConfig } };
+        break;
+      case 'debug-system-print-remove-channel':
+        systemDebugPrintConfig = sanitizeSystemDebugPrintConfig({ removeChannel: data.channel });
+        result = { success: true, systemDebugPrintConfig: { ...systemDebugPrintConfig } };
+        break;
+      case 'debug-clear-system-prints':
+        systemDebugPrints = [];
+        io.emit('system-debug-snapshot', systemDebugPrints);
+        result = { success: true };
+        break;
       case 'debug-run-bot-step': {
         const acted = runOneBotAction();
         result = { success: true, acted };
         break;
       }
       default:
-        result = { error: 'Unknown host action.' };
+        if (['manualeliminate', 'eliminateplayer', 'eliminate'].includes(actionCompact)) {
+          if (!data.playerId) {
+            result = { error: 'Missing playerId for eliminate action.' };
+            break;
+          }
+          result = gameState.adminEliminatePlayer(data.playerId);
+          if (!result.error) {
+            timerManager.clearTimer();
+          }
+          break;
+        }
+        result = { error: `Unknown host action: ${rawAction || '(empty)'}` };
         break;
     }
 
@@ -1521,7 +1653,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
+    serverDebug('connections', `User disconnected: ${socket.id}`);
     gameState.markDisconnected(socket.id);
     emitGameState();
   });
@@ -1557,7 +1689,7 @@ setInterval(() => {
     return;
   }
 
-  console.warn(`[CASCADE] Watchdog completion fired for token=${expectedCascadeSpinToken}.`);
+  serverDebug('cascade', `[CASCADE] Watchdog completion fired for token=${expectedCascadeSpinToken}.`);
   handleCascadeSpinConcluded('watchdog-interval');
 }, 1000);
 
@@ -1606,7 +1738,7 @@ setInterval(() => {
     return;
   }
 
-  console.warn(`[POSITION] Failsafe timer start fired for picker=${currentPickerId}.`);
+  serverDebug('position', `[POSITION] Failsafe timer start fired for picker=${currentPickerId}.`);
   positionTimerMissingSince = 0;
   maybeStartPositionTimer();
 }, 500);

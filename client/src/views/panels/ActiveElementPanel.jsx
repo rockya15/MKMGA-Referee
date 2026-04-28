@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from 'react';
 import SpinningWheel from '../../components/SpinningWheel';
 import Avatar from '../../components/Avatar';
 import StackedAvatars from '../../components/StackedAvatars';
@@ -67,10 +68,62 @@ function VoteElement({ players, groupVote, voteResult, voteTimeLeft, voteCounts,
   return null;
 }
 
-function PayoutElement({ winners, raceResult, getFavoriteColor }) {
+function PayoutElement({ winners, raceResult, getFavoriteColor, payoutTotalAmount }) {
   const shown = winners.slice(0, 3);
   const overflow = winners.slice(3);
   const overflowNames = overflow.map((p) => getFirstName(p.displayName || p.realName || p.id));
+  const totalAmount = Number(payoutTotalAmount) || 0;
+  const perWinner = winners.length > 0 ? totalAmount / winners.length : 0;
+
+  // phase: 'idle' -> 'total' -> 'split' -> 'done'
+  const [phase, setPhase] = useState('idle');
+  const [coins, setCoins] = useState([]);
+  const [caughtSet, setCaughtSet] = useState(new Set());
+  const containerRef = useRef(null);
+  const sourceRef = useRef(null);
+  const winnerTileRefs = useRef([]);
+
+  const winnerIds = winners.map((w) => w.id).join(',');
+  useEffect(() => {
+    setPhase('idle');
+    setCoins([]);
+    setCaughtSet(new Set());
+    if (winners.length === 0 || totalAmount === 0) return undefined;
+    const t1 = setTimeout(() => setPhase('total'), 300);
+    const t2 = setTimeout(() => setPhase('split'), 5300);
+    const t3 = setTimeout(() => setPhase('done'), 8800);
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [winnerIds, totalAmount]);
+
+  useEffect(() => {
+    if (phase !== 'split') return;
+    if (!containerRef.current || !sourceRef.current) return;
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const srcRect = sourceRef.current.getBoundingClientRect();
+    const sx = srcRect.left + srcRect.width / 2 - containerRect.left;
+    const sy = srcRect.top + srcRect.height / 2 - containerRect.top;
+    const newCoins = shown.map((winner, i) => {
+      const tileEl = winnerTileRefs.current[i];
+      let tx = sx + (i - (shown.length - 1) / 2) * 60;
+      let ty = sy + 80;
+      if (tileEl) {
+        const r = tileEl.getBoundingClientRect();
+        tx = r.left + r.width / 2 - containerRect.left;
+        ty = r.top + r.height / 2 - containerRect.top;
+      }
+      const arcPeakX = (sx + tx) / 2 + (Math.random() - 0.5) * 80;
+      const arcPeakY = Math.min(sy, ty) - 70 - Math.random() * 50;
+      return { id: i, sx, sy, tx, ty, arcPeakX, arcPeakY, delay: i * 180 };
+    });
+    setCoins(newCoins);
+    newCoins.forEach((coin) => {
+      setTimeout(() => setCaughtSet((prev) => new Set([...prev, coin.id])), coin.delay + 1050);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
+  const fmt = (val) => `$${Math.abs(val).toFixed(2)}`;
 
   if (winners.length === 0) {
     return (
@@ -82,20 +135,68 @@ function PayoutElement({ winners, raceResult, getFavoriteColor }) {
   }
 
   return (
-    <div style={s.payoutPanel}>
+    <div ref={containerRef} style={{ ...s.payoutPanel, position: 'relative', overflow: 'visible' }}>
       <div style={s.payoutTitle}>{winners.length === 1 ? 'Winner' : 'Winners'}</div>
       <div style={s.payoutSubtitle}>Hit position: <strong>{raceResult ?? 'N/A'}</strong></div>
+
+      {/* Phase 1 — total earnings */}
+      {(phase === 'total' || phase === 'split') && totalAmount > 0 && (
+        <div
+          ref={sourceRef}
+          className={phase === 'split' ? 'payout-total-exit' : 'payout-total-enter'}
+          style={s.payoutTotalDisplay}
+        >
+          <div style={s.payoutTotalLabel}>TOTAL POT DISTRIBUTED</div>
+          <div style={s.payoutTotalAmount}>{fmt(totalAmount)}</div>
+          {winners.length > 1 && (
+            <div style={s.payoutSplitHint}>{fmt(perWinner)} × {winners.length} winners</div>
+          )}
+        </div>
+      )}
+
+      {/* Winner tiles */}
       <div style={s.payoutWinnersRow}>
-        {shown.map((player) => (
-          <div key={player.id} style={s.payoutWinnerTile}>
+        {shown.map((player, i) => (
+          <div
+            key={player.id}
+            ref={(el) => { winnerTileRefs.current[i] = el; }}
+            style={s.payoutWinnerTile}
+            className={caughtSet.has(i) ? 'payout-winner-catch' : undefined}
+          >
             <Avatar player={player} size={80} borderWidth={3} getFavoriteColor={getFavoriteColor} />
             <div style={s.payoutWinnerName}>{getFirstName(player.displayName || player.realName || player.id)}</div>
+            {(phase === 'done' || caughtSet.has(i)) && perWinner > 0 && (
+              <div style={s.payoutWinnerShare} className="payout-share-pop">{fmt(perWinner)}</div>
+            )}
           </div>
         ))}
       </div>
+
       {overflow.length > 0 && (
         <div style={s.payoutOverflowText}>+{overflow.length} more: {overflowNames.join(', ')}</div>
       )}
+
+      {/* Flying coins */}
+      {coins.map((coin) => (
+        <div
+          key={coin.id}
+          className="payout-coin-fly"
+          style={{
+            position: 'absolute',
+            left: coin.sx,
+            top: coin.sy,
+            '--arc-x': `${coin.arcPeakX - coin.sx}px`,
+            '--arc-y': `${coin.arcPeakY - coin.sy}px`,
+            '--end-x': `${coin.tx - coin.sx}px`,
+            '--end-y': `${coin.ty - coin.sy}px`,
+            animationDelay: `${coin.delay}ms`,
+            pointerEvents: 'none',
+            zIndex: 300,
+          }}
+        >
+          {fmt(perWinner)}
+        </div>
+      ))}
     </div>
   );
 }
@@ -127,6 +228,7 @@ export default function ActiveElementPanel({
   socket, wheelContextTitle, spinContextLine1, spinContextLine2, cascadePromptPlayer,
   // payout state
   payoutWinners,
+  payoutTotalAmount,
   getFavoriteColor,
 }) {
   const { progress } = usePanelProgress();
@@ -158,7 +260,7 @@ export default function ActiveElementPanel({
 
       {elementType === 'payout' && (
         <div style={s.centeredWrap}>
-          <PayoutElement winners={payoutWinners} raceResult={raceResult} getFavoriteColor={getFavoriteColor} />
+          <PayoutElement winners={payoutWinners} raceResult={raceResult} getFavoriteColor={getFavoriteColor} payoutTotalAmount={payoutTotalAmount} />
         </div>
       )}
 
@@ -340,6 +442,8 @@ const s = {
     gap: 6,
     width: '100%',
     marginTop: 8,
+    maxWidth: 400,
+    margin: '8px auto 0',
   },
   positionCell: { borderRadius: 6, padding: '6px 4px', textAlign: 'center', border: '1px solid #333' },
   positionSlot: { fontSize: 13, fontWeight: 'bold', color: '#f0c040' },
@@ -449,5 +553,29 @@ const s = {
     background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(242,213,122,0.3)',
   },
   payoutWinnerName: { fontSize: 16, fontWeight: 'bold', color: '#f5e6bc' },
+  payoutWinnerShare: {
+    fontSize: 16, fontWeight: 'bold', color: '#2ecc71',
+    textShadow: '0 0 10px rgba(46,204,113,0.6)',
+  },
+  payoutTotalDisplay: {
+    textAlign: 'center',
+    padding: '16px 28px',
+    background: 'linear-gradient(180deg, rgba(40,28,6,0.97) 0%, rgba(20,14,2,0.99) 100%)',
+    border: '1px solid #b8920a',
+    borderRadius: 12,
+    boxShadow: '0 0 48px rgba(240,192,64,0.4), inset 0 0 24px rgba(240,192,64,0.12)',
+    width: '100%',
+  },
+  payoutTotalLabel: {
+    fontSize: 11, letterSpacing: 2.5, color: '#b8920a',
+    textTransform: 'uppercase', marginBottom: 6,
+  },
+  payoutTotalAmount: {
+    fontSize: 52, fontWeight: 'bold', color: '#f0c040',
+    textShadow: '0 0 24px rgba(240,192,64,0.75)',
+    fontVariantNumeric: 'tabular-nums',
+    lineHeight: 1.1,
+  },
+  payoutSplitHint: { fontSize: 13, color: '#c8a830', marginTop: 6 },
   payoutOverflowText: { fontSize: 13, color: '#d8c58f', lineHeight: 1.3, maxWidth: '100%' },
 };

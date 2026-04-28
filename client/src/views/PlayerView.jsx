@@ -5,6 +5,7 @@ import Avatar from '../components/Avatar';
 const ALL_POSITIONS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', 'DNF'];
 const GENTLE_DNF_SLOTS = [1, 2, 4, 8, 13];
 const HARSH_DNF_SLOTS = [4, 8, 13];
+const DEATH_GIF_SRC = '/assets/death.gif';
 
 function PlayerView({ gameState, socket }) {
   const [mode, setMode] = useState('menu'); // 'menu' | 'joining' | 'reconnecting'
@@ -426,6 +427,38 @@ function PlayerView({ gameState, socket }) {
             Reconnect to Existing Account
           </button>
         </div>
+      </div>
+    );
+  }
+
+  const eliminationState = String(me.eliminationState || 'alive');
+  const isPendingResurrection = eliminationState === 'pending_resurrection';
+  const isFailedResurrection = eliminationState === 'failed_resurrection';
+  const eliminationSummary = me.eliminationSummary || {};
+
+  if (isPendingResurrection) {
+    return (
+      <div style={styles.eliminationScreen}>
+        <div style={styles.eliminationTitle}>YOU HAVE BEEN ELIMINATED</div>
+        <img src={DEATH_GIF_SRC} alt="Eliminated" style={styles.eliminationGifLarge} />
+        <div style={styles.eliminationLine}>BUT <span className="elimination-gold-pulse">YOU STILL HAVE A CHANCE</span></div>
+        <div style={styles.eliminationLine}>SEE THE BARTENDER FOR A POSSIBLE</div>
+        <div style={styles.eliminationLine}><span className="elimination-gold-pulse">LUCKY BASTARD REVIVAL</span></div>
+      </div>
+    );
+  }
+
+  if (isFailedResurrection) {
+    return (
+      <div style={styles.eliminationScreen}>
+        <div style={styles.eliminationTitle}>YOU HAVE BEEN ELIMINATED</div>
+        <img src={DEATH_GIF_SRC} alt="Eliminated" style={styles.eliminationGifLarge} />
+        <div style={styles.eliminationLine}>YOU SURVIVED {Number(eliminationSummary.survivedRaces ?? 0)} RACES</div>
+        <div style={styles.eliminationLine}>YOU OUTLIVED {Number(eliminationSummary.outlivedPlayers ?? 0)} PLAYERS</div>
+        <div style={styles.eliminationLine}>
+          YOU GAMBLED AWAY <span style={styles.eliminationMoneyRed}>${Number(eliminationSummary.gambledAway ?? 0).toFixed(2)}</span>
+        </div>
+        <div style={styles.eliminationGoldLine}>YOU WILL HELP DECIDE WHO THE KING OF MKMGA IS!</div>
       </div>
     );
   }
@@ -1332,6 +1365,51 @@ const styles = {
     fontFamily: "'Segoe UI', sans-serif",
     display: 'flex',
     flexDirection: 'column',
+  },
+  eliminationScreen: {
+    minHeight: '100vh',
+    background: 'radial-gradient(circle at 50% 0%, #2a1313 0%, #130909 48%, #050505 100%)',
+    color: '#fff',
+    fontFamily: "'Segoe UI', sans-serif",
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    textAlign: 'center',
+    gap: 14,
+    padding: '24px 18px',
+  },
+  eliminationTitle: {
+    fontSize: 34,
+    fontWeight: '900',
+    letterSpacing: 1.1,
+    lineHeight: 1.15,
+    color: '#fff',
+    textTransform: 'uppercase',
+    textShadow: '0 0 18px rgba(255, 90, 90, 0.45)',
+  },
+  eliminationGifLarge: {
+    width: 'min(78vw, 320px)',
+    aspectRatio: '1 / 1',
+    objectFit: 'cover',
+    borderRadius: 16,
+  },
+  eliminationLine: {
+    fontSize: 21,
+    fontWeight: '800',
+    lineHeight: 1.25,
+    textTransform: 'uppercase',
+  },
+  eliminationGoldLine: {
+    fontSize: 20,
+    fontWeight: '900',
+    lineHeight: 1.25,
+    textTransform: 'uppercase',
+    color: '#f0c040',
+  },
+  eliminationMoneyRed: {
+    color: '#e74c3c',
+    fontWeight: '900',
   },
   // ── Join / Reconnect screens
   joinHeaderRow: {
