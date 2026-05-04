@@ -174,7 +174,7 @@ export default function LeaderboardPanel({
           index: i,
           rowIndex: globalRowIndex++,
           targetY: yOffset,
-          rank: usePayoutClosenessOrder ? i + 1 : null,
+          rank: usePayoutClosenessOrder ? i + 1 : (wheelOrderRank.get(p.id) ?? i) + 1,
           dimmed: false,
         });
         yOffset += ROW_HEIGHT + ROW_GAP;
@@ -487,7 +487,10 @@ export default function LeaderboardPanel({
     const rowDimmed = dimmed || tokenSpentThisRace;
     const rowEliminated = isEliminatedPlayer(player);
     const isPayoutWinner = currentStage === 'PAYOUT' && payoutWinnerIds.has(player.id);
-    const payoutTextColor = '#161204';
+    const isPayoutSilver = currentStage === 'PAYOUT' && !isPayoutWinner && showRank === 2;
+    const isPayoutBronze = currentStage === 'PAYOUT' && !isPayoutWinner && !isPayoutSilver && showRank === 3;
+    const isPayoutPodium = isPayoutWinner || isPayoutSilver || isPayoutBronze;
+    const payoutTextColor = '#0e0c08';
     const transition = playerTransitions[player.id];
     const showTransitionLabel = transition?.phase === 'announcing';
     const normalBackground = isOnClock
@@ -505,21 +508,33 @@ export default function LeaderboardPanel({
           filter: rowDimmed ? 'grayscale(0.45)' : 'none',
           background: isPayoutWinner
             ? 'linear-gradient(90deg, rgba(133,95,30,0.95) 0%, rgba(199,156,53,0.96) 52%, rgba(133,95,30,0.95) 100%)'
+            : isPayoutSilver
+            ? 'linear-gradient(90deg, rgba(55,58,68,0.95) 0%, rgba(140,148,160,0.96) 52%, rgba(55,58,68,0.95) 100%)'
+            : isPayoutBronze
+            ? 'linear-gradient(90deg, rgba(65,40,18,0.95) 0%, rgba(148,90,40,0.96) 52%, rgba(65,40,18,0.95) 100%)'
             : normalBackground,
           border: isPayoutWinner ? '1px solid #f2d57a'
+            : isPayoutSilver ? '1px solid #b8c4d0'
+            : isPayoutBronze ? '1px solid #c47c30'
             : isOnClock ? `1px solid ${timerUrgent ? '#e74c3c' : '#2ecc71'}`
             : isWheelFocus ? '1px solid #f0c040'
             : rowDimmed ? '1px solid #2b2b2b'
             : '1px solid transparent',
-          boxShadow: isPayoutWinner ? '0 0 18px rgba(240,192,64,0.45), inset 0 0 14px rgba(255,220,120,0.25)' : 'none',
-          color: isPayoutWinner ? payoutTextColor : undefined,
+          boxShadow: isPayoutWinner
+            ? '0 0 18px rgba(240,192,64,0.45), inset 0 0 14px rgba(255,220,120,0.25)'
+            : isPayoutSilver
+            ? '0 0 14px rgba(180,195,210,0.35), inset 0 0 10px rgba(200,215,230,0.2)'
+            : isPayoutBronze
+            ? '0 0 14px rgba(195,125,55,0.35), inset 0 0 10px rgba(215,145,75,0.2)'
+            : 'none',
+          color: isPayoutPodium ? payoutTextColor : undefined,
         }}
       >
-        <span style={{ ...s.lbRank, color: isPayoutWinner ? payoutTextColor : s.lbRank.color }}>
+        <span style={{ ...s.lbRank, color: isPayoutPodium ? payoutTextColor : s.lbRank.color }}>
           {showRank !== null ? `#${showRank}` : '...'}
         </span>
         <Avatar player={player} size={40} borderColor={getFavoriteColor(player)} getFavoriteColor={getFavoriteColor} />
-        <span style={{ ...s.lbName, color: isPayoutWinner ? payoutTextColor : undefined }}>{player.displayName}</span>
+        <span style={{ ...s.lbName, color: isPayoutPodium ? payoutTextColor : undefined }}>{player.displayName}</span>
         {isWheelFocus && !isOnClock && <span style={s.lbFocusBadge}>FOCUS</span>}
         {isOnClock && (
           <span style={{ ...s.lbTimerBadge, color: timerUrgent ? '#e74c3c' : '#2ecc71', borderColor: timerUrgent ? '#e74c3c' : '#2ecc71' }}>
@@ -527,20 +542,20 @@ export default function LeaderboardPanel({
           </span>
         )}
         {tokenLabel && (
-          <span style={{ ...s.lbNoToken, background: isPayoutWinner ? '#3e3210' : s.lbNoToken.background, color: isPayoutWinner ? '#121212' : s.lbNoToken.color }}>
+          <span style={{ ...s.lbNoToken, background: isPayoutPodium ? '#3e3210' : s.lbNoToken.background, color: isPayoutPodium ? '#121212' : s.lbNoToken.color }}>
             {tokenLabel}
           </span>
         )}
         {noReviveLabel && (
-          <span style={{ ...s.lbNoRevive, background: isPayoutWinner ? '#3e3210' : s.lbNoRevive.background, color: isPayoutWinner ? '#121212' : s.lbNoRevive.color }}>
+          <span style={{ ...s.lbNoRevive, background: isPayoutPodium ? '#3e3210' : s.lbNoRevive.background, color: isPayoutPodium ? '#121212' : s.lbNoRevive.color }}>
             {noReviveLabel}
           </span>
         )}
         <MoneyDelta value={player.balance}>
-          <MoneyTicker value={player.balance} prefix="$" style={{ ...s.lbBalance, color: isPayoutWinner ? payoutTextColor : s.lbBalance.color }} />
+          <MoneyTicker value={player.balance} prefix="$" style={{ ...s.lbBalance, color: isPayoutPodium ? payoutTextColor : s.lbBalance.color }} />
         </MoneyDelta>
         {player.positions?.length > 0 && (
-          <span style={{ ...s.lbPositions, color: isPayoutWinner ? payoutTextColor : s.lbPositions.color }}>
+          <span style={{ ...s.lbPositions, color: isPayoutPodium ? payoutTextColor : s.lbPositions.color }}>
             [{player.positions.join(', ')}]
           </span>
         )}

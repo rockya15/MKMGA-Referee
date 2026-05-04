@@ -33,7 +33,9 @@ const CASCADE_DNF_COMPLETION_TIMEOUT_MS = 8000;
 const POSITION_TIMER_FAILSAFE_DELAY_MS = 8500;
 const BOT_POSITION_SPIN_WAIT_MS = 6500;
 
-const BOT_COLOR_PALETTE = ['#2a2a4a', '#2f4f4f', '#5b2c6f', '#1f5f8b', '#2b7a4b', '#8b5a2b', '#6f4f28', '#4a5d23'];
+function randomHexColor() {
+  return `#${Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0')}`;
+}
 const BOT_DEFAULTS = {
   autoPick: true,
   decisionDelayMinMs: 500,
@@ -1017,6 +1019,31 @@ function getCurrentWinnerNames(snapshot) {
     .map((player) => player.displayName ?? player.realName ?? player.id);
 }
 
+const BOT_COMMON_NAMES = [
+  'Jerry', 'Timmy', 'Karen', 'Dave', 'Steve', 'Linda', 'Mike', 'Susan',
+  'Gary', 'Brenda', 'Todd', 'Cindy', 'Frank', 'Diane', 'Larry', 'Pam',
+  'Carl', 'Donna', 'Barry', 'Cheryl', 'Dennis', 'Janet', 'Roger', 'Patty',
+  'Randy', 'Vicky', 'Phil', 'Carol', 'Glen', 'Debbie', 'Chad', 'Becky',
+  'Earl', 'Tammy', 'Hank', 'Nancy', 'Dale', 'Peggy', 'Bobby', 'Luanne',
+];
+const BOT_RARE_NAMES = [
+  'Bogard', 'Don Kreig', 'Buttercup', 'Chud', 'Discord Mod', 'Nathantiel',
+  'berezaa', 'I love Cock', 'Cock Chaser', 'Cock Cat', 'Hermann Ziggy',
+  'Viscous', 'Squeaker',
+];
+// ~10% chance of drawing a rare name
+function pickBotName(usedNames) {
+  const pool = Math.random() < 0.10 ? BOT_RARE_NAMES : BOT_COMMON_NAMES;
+  const available = pool.filter((n) => !usedNames.has(n));
+  if (available.length === 0) {
+    // fall back to opposite pool, then numbered fallback
+    const fallback = (pool === BOT_RARE_NAMES ? BOT_COMMON_NAMES : BOT_RARE_NAMES).filter((n) => !usedNames.has(n));
+    if (fallback.length > 0) return fallback[Math.floor(Math.random() * fallback.length)];
+    return `Bot ${usedNames.size + 1}`;
+  }
+  return available[Math.floor(Math.random() * available.length)];
+}
+
 function addDebugBots(count, startingCash) {
   if (gameState.currentStage !== STAGES.LOBBY || !gameState.hostSettings.lobbyOpen) {
     return { error: 'Bots can only be added while the lobby is open.' };
@@ -1029,12 +1056,25 @@ function addDebugBots(count, startingCash) {
     ? maxCap
     : (Number.isFinite(baseCash) && baseCash > 0 ? baseCash : 15);
 
+  const usedBotNames = new Set(
+    gameState.players
+      .filter((p) => isBotPlayer(p))
+      .map((p) => {
+        const dn = p.displayName;
+        if (dn.endsWith(' (BOT)')) return dn.slice(0, -6);
+        if (dn.startsWith('BOT ')) return dn.slice(4);
+        return dn;
+      })
+  );
+
   let added = 0;
   for (let i = 0; i < wanted; i += 1) {
     const n = gameState.players.filter((p) => isBotPlayer(p)).length + 1;
-    const displayName = `Bot ${n}`;
+    const name = pickBotName(usedBotNames);
+    usedBotNames.add(name);
+    const displayName = `${name} (BOT)`;
     const realName = `bot_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const color = BOT_COLOR_PALETTE[(n - 1) % BOT_COLOR_PALETTE.length];
+    const color = randomHexColor();
     const fakeSocketId = `bot-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
     const result = gameState.addOrRejoinPlayer(fakeSocketId, {

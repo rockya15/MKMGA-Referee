@@ -23,7 +23,8 @@ function getFavoriteColorStatic(player) {
 }
 
 function HostView({ gameState, socket }) {
-  const { currentStage, players, wheelOrder, positionDraft, pot, raceNumber, entryFee, raceResult } = gameState;
+  const { currentStage, players: rawPlayers, wheelOrder, positionDraft, pot, raceNumber, entryFee, raceResult } = gameState;
+  const players = Array.isArray(rawPlayers) ? rawPlayers : [];
 
   const [groupVote, setGroupVote] = useState(null);
   const [voteTimeLeft, setVoteTimeLeft] = useState(0);

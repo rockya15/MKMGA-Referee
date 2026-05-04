@@ -355,26 +355,34 @@ export default function ActiveElementPanel({
             <div style={s.wheelDone}>All positions assigned!</div>
           )}
 
-          {positionDraft && (
-            <div style={s.positionGrid}>
-              {Array.from({ length: 13 }, (_, i) => {
-                const slot = i < 12 ? String(i + 1) : 'DNF';
-                const slotOwners = players.filter((p) => Array.isArray(p.positions) && p.positions.includes(slot));
-                return (
-                  <div key={slot} style={{ ...s.positionCell, background: slotOwners.length > 0 ? '#1e3a2f' : '#1a1a1a' }}>
-                    <div style={s.positionSlot}>{slot}</div>
-                    <div style={s.positionOwner}>
-                      {slotOwners.length > 0 ? (
-                        <StackedAvatars players={slotOwners} size={32} maxDisplay={3} stackOffset={-10} getFavoriteColor={getFavoriteColor} />
-                      ) : (
-                        <div style={{ color: '#666', fontSize: 12 }}>—</div>
-                      )}
-                    </div>
+          {positionDraft && (() => {
+            const slots = Array.from({ length: 13 }, (_, i) => i < 12 ? String(i + 1) : 'DNF');
+            const renderCell = (slot) => {
+              const slotOwners = players.filter((p) => Array.isArray(p.positions) && p.positions.includes(slot));
+              return (
+                <div key={slot} style={{ ...s.positionCell, background: slotOwners.length > 0 ? '#1e3a2f' : '#1a1a1a' }}>
+                  <div style={s.positionSlot}>{slot}</div>
+                  <div style={s.positionOwner}>
+                    {slotOwners.length > 0 ? (
+                      <StackedAvatars players={slotOwners} size={32} maxDisplay={3} stackOffset={-10} getFavoriteColor={getFavoriteColor} />
+                    ) : (
+                      <div style={{ color: '#666', fontSize: 12 }}>—</div>
+                    )}
                   </div>
-                );
-              })}
-            </div>
-          )}
+                </div>
+              );
+            };
+            return (
+              <div style={s.positionGrid}>
+                <div style={s.positionGridRow}>
+                  {slots.slice(0, 7).map(renderCell)}
+                </div>
+                <div style={{ ...s.positionGridRow, justifyContent: 'center' }}>
+                  {slots.slice(7).map(renderCell)}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
@@ -437,15 +445,19 @@ const s = {
   pickerArrow: { color: '#f0c040' },
   wheelDone: { fontSize: 20, color: '#2ecc71', fontWeight: 'bold', marginTop: 40 },
   positionGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(7, 1fr)',
+    display: 'flex',
+    flexDirection: 'column',
     gap: 6,
     width: '100%',
     marginTop: 8,
-    maxWidth: 400,
-    margin: '8px auto 0',
   },
-  positionCell: { borderRadius: 6, padding: '6px 4px', textAlign: 'center', border: '1px solid #333' },
+  positionGridRow: {
+    display: 'flex',
+    flexDirection: 'row',
+    gap: 6,
+    width: '100%',
+  },
+  positionCell: { borderRadius: 6, padding: '6px 4px', textAlign: 'center', border: '1px solid #333', flex: '1 1 0', minWidth: 0 },
   positionSlot: { fontSize: 13, fontWeight: 'bold', color: '#f0c040' },
   positionOwner: {
     fontSize: 11, color: '#ccc', marginTop: 4, minHeight: 34,
