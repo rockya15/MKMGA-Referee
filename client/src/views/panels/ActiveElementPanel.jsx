@@ -371,6 +371,8 @@ export default function ActiveElementPanel({
   const panelReady = progress >= 0.95;
 
   const { positionDraft, currentStage, raceResult } = gameState;
+  const instantWheelSpin = Boolean(gameState?.debugTools?.instantWheelSpin);
+  const wheelSpinDurationMs = instantWheelSpin ? 120 : 6000;
 
   const wheelSegmentColors = segments.map((seg) => seg.color ?? '#2a2410');
   const CASCADE_RESULT_HOLD_MS = 7000;
@@ -413,6 +415,7 @@ export default function ActiveElementPanel({
                           spinning={panelReady && spinning}
                           onSpinComplete={handleSpinComplete}
                           size={420}
+                          spinDurationMs={wheelSpinDurationMs}
                           highlightIndex={highlightIndex}
                           dimAmount={0.2}
                           segmentColors={wheelSegmentColors}
@@ -452,6 +455,7 @@ export default function ActiveElementPanel({
                             }, CASCADE_RESULT_HOLD_MS);
                           }}
                           size={420}
+                          spinDurationMs={wheelSpinDurationMs}
                           segmentColors={cascadeSpinData.segmentColors}
                         />
                       </div>

@@ -32,12 +32,14 @@ const CASCADE_COMPLETION_TIMEOUT_MS = 14000;
 const CASCADE_DNF_COMPLETION_TIMEOUT_MS = 8000;
 const POSITION_TIMER_FAILSAFE_DELAY_MS = 8500;
 const BOT_POSITION_SPIN_WAIT_MS = 6500;
+const BOT_POSITION_SPIN_WAIT_MS_INSTANT = 120;
 
 function randomHexColor() {
   return `#${Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0')}`;
 }
 const BOT_DEFAULTS = {
   autoPick: true,
+  instantWheelSpin: false,
   decisionDelayMinMs: 500,
   decisionDelayMaxMs: 1500,
   preBetMode: 'AUTO',
@@ -49,6 +51,8 @@ const BOT_DEFAULTS = {
 };
 const BOT_POSITION_POST_SPIN_GRACE_MS = 1400;
 const BOT_CASCADE_POST_SPIN_GRACE_MS = 700;
+const BOT_POSITION_POST_SPIN_GRACE_MS_INSTANT = 80;
+const BOT_CASCADE_POST_SPIN_GRACE_MS_INSTANT = 80;
 const BOT_AUTOMATION_HEARTBEAT_MS = 250;
 const PRE_BET_DEBUG_LOG_PATH = path.join(__dirname, '..', 'data', 'bot-prebet-debug.log');
 // Pre-defined debug channels — all start OFF
@@ -187,6 +191,18 @@ function hasBotPlayers() {
   return gameState.players.some((player) => isBotPlayer(player));
 }
 
+function getBotPositionSpinWaitMs() {
+  return botSettings.instantWheelSpin ? BOT_POSITION_SPIN_WAIT_MS_INSTANT : BOT_POSITION_SPIN_WAIT_MS;
+}
+
+function getBotPositionPostSpinGraceMs() {
+  return botSettings.instantWheelSpin ? BOT_POSITION_POST_SPIN_GRACE_MS_INSTANT : BOT_POSITION_POST_SPIN_GRACE_MS;
+}
+
+function getBotCascadePostSpinGraceMs() {
+  return botSettings.instantWheelSpin ? BOT_CASCADE_POST_SPIN_GRACE_MS_INSTANT : BOT_CASCADE_POST_SPIN_GRACE_MS;
+}
+
 function getBotDebugState() {
   return {
     ...botSettings,
@@ -321,7 +337,7 @@ function scheduleBotPositionSpinFallback() {
     if (hasActiveTurnTimer(pickerId, 'position')) return;
     serverDebug('position', `[POSITION] Bot spin fallback timer start for picker=${pickerId}.`);
     maybeStartPositionTimer();
-  }, BOT_POSITION_SPIN_WAIT_MS);
+  }, getBotPositionSpinWaitMs());
 }
 
 function hasActiveTurnTimer(playerId, mode) {
@@ -536,7 +552,7 @@ function maybeStartPositionTimer() {
   const currentPickerId = gameState.wheelOrder?.[draft.currentPlayerIndex];
   if (currentPickerId) {
     timerManager.startTimer(currentPickerId, 30, 'position');
-    botPositionActionsAllowedAt = Date.now() + BOT_POSITION_POST_SPIN_GRACE_MS;
+    botPositionActionsAllowedAt = Date.now() + getBotPositionPostSpinGraceMs();
     positionTimerMissingSince = 0;
     clearBotPositionSpinFallback();
     queueBotAutoAction();
@@ -1091,7 +1107,7 @@ function addDebugBots(count, startingCash) {
     const n = gameState.players.filter((p) => isBotPlayer(p)).length + 1;
     const name = pickBotName(usedBotNames);
     usedBotNames.add(name);
-    const displayName = `${name} (BOT)`;
+    const displayName = name;
     const realName = `bot_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const color = randomHexColor();
     const fakeSocketId = `bot-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -1148,6 +1164,7 @@ function updateBotSettings(payload = {}) {
 
   botSettings = {
     autoPick: typeof payload.autoPick === 'boolean' ? payload.autoPick : botSettings.autoPick,
+    instantWheelSpin: typeof payload.instantWheelSpin === 'boolean' ? payload.instantWheelSpin : botSettings.instantWheelSpin,
     decisionDelayMinMs: nextMin,
     decisionDelayMaxMs: nextMax,
     preBetMode: pickMode(payload.preBetMode, ['AUTO', 'PAY', 'SKIP', 'RANDOM'], botSettings.preBetMode),
@@ -1200,7 +1217,7 @@ function handleCascadeSpinConcluded(reason) {
     const displacedId = gameState.positionDraft?.cascadeChain?.pendingDisplacedId;
     if (displacedId) {
       timerManager.startTimer(displacedId, 30, 'cascade-response');
-      botCascadeActionsAllowedAt = Date.now() + BOT_CASCADE_POST_SPIN_GRACE_MS;
+      botCascadeActionsAllowedAt = Date.now() + getBotCascadePostSpinGraceMs();
       queueBotAutoAction();
     }
     emitGameState();

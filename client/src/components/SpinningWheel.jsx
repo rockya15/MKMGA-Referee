@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
-// Duration of the spin animation in ms
-const SPIN_DURATION = 6000;
+// Default duration of the spin animation in ms
+const DEFAULT_SPIN_DURATION_MS = 6000;
 // Full rotations to add for realism
 const FULL_ROTATIONS = 8;
 
@@ -31,7 +31,7 @@ function easeOut(t) {
  *   highlightIndex  — when set (not null), dims all segments except this index
  *   dimAmount       — 0–1, how much to dim non-highlighted segments (default 0.25)
  */
-export default function SpinningWheel({ segments, targetIndex, spinning, onSpinComplete, size = 500, highlightIndex = null, dimAmount = 0.25, segmentColors = null }) {
+export default function SpinningWheel({ segments, targetIndex, spinning, onSpinComplete, size = 500, highlightIndex = null, dimAmount = 0.25, segmentColors = null, spinDurationMs = DEFAULT_SPIN_DURATION_MS }) {
   const canvasRef = useRef(null);
   const animFrameRef = useRef(null);
   const startTimeRef = useRef(null);
@@ -49,6 +49,7 @@ export default function SpinningWheel({ segments, targetIndex, spinning, onSpinC
   const radius = center - 10;
 
   const colors = segmentColors ?? getSegmentColors(segments.length);
+  const effectiveSpinDurationMs = Math.max(80, Number(spinDurationMs) || DEFAULT_SPIN_DURATION_MS);
 
   const drawWheel = useCallback((currentAngle) => {
     const canvas = canvasRef.current;
@@ -201,7 +202,7 @@ export default function SpinningWheel({ segments, targetIndex, spinning, onSpinC
     const animate = (timestamp) => {
       if (!startTimeRef.current) startTimeRef.current = timestamp;
       const elapsed = timestamp - startTimeRef.current;
-      const t = Math.min(elapsed / SPIN_DURATION, 1);
+      const t = Math.min(elapsed / effectiveSpinDurationMs, 1);
       const eased = easeOut(t);
 
       const current = startAngleRef.current + (targetAngleRef.current - startAngleRef.current) * eased;
@@ -220,7 +221,7 @@ export default function SpinningWheel({ segments, targetIndex, spinning, onSpinC
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [spinning, computeTargetAngle, drawWheel]);
+  }, [spinning, computeTargetAngle, drawWheel, effectiveSpinDurationMs]);
 
   // Draw idle state (also re-draws when highlightIndex changes)
   useEffect(() => {

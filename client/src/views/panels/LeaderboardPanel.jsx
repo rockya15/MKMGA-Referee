@@ -21,8 +21,12 @@ const LEADERBOARD_MANUAL_OVERRIDE_MS = 4500;
 
 // ─── Movement table constants ───────────────────────────────────────────────
 const MOVE_DELAY_MS    = 2000;
-const MOVE_TICK_MS     = 500;
+const MOVE_TICK_MS     = 100;
+const MOVE_TWEEN_MS    = 60;
 const MOVE_SETTLE_PX   = 0.4;
+const TRANSITION_IN_ZONE_MS = 1000;
+const TRANSITION_FADE_MS = 420;
+const TRANSITION_POP_MS = 380;
 const SCHEDULER_STATE  = {
   IDLE: 'IDLE',
   HOLDING: 'HOLDING',
@@ -91,6 +95,39 @@ function arraysEqual(a, b) {
   return true;
 }
 
+function comparePlayersByLobbyName(a, b) {
+  const aName = getPlayerDisplayName(a);
+  const bName = getPlayerDisplayName(b);
+
+  // Primary: case-insensitive alphabetical, matching lobby feel.
+  const ci = aName.localeCompare(bName, undefined, { sensitivity: 'base' });
+  if (ci !== 0) return ci;
+
+  // Secondary: case-sensitive to make equal-base names deterministic.
+  const cs = aName.localeCompare(bName);
+  if (cs !== 0) return cs;
+
+  // Final tie-break: stable id ordering (prevents periodic flip-flops).
+  return String(a?.id ?? '').localeCompare(String(b?.id ?? ''));
+}
+
+function stripBotSuffix(name) {
+  return String(name ?? '').replace(/\s*\(BOT\)\s*$/i, '').trim();
+}
+
+function isBotPlayer(player) {
+  if (!player) return false;
+  if (Boolean(player.isBot)) return true;
+  const id = String(player.id ?? '').toLowerCase();
+  const realName = String(player.realName ?? '').toLowerCase();
+  return id.startsWith('bot-') || realName.startsWith('bot_');
+}
+
+function getPlayerDisplayName(player) {
+  const base = player?.displayName ?? player?.realName ?? String(player?.id ?? '');
+  return stripBotSuffix(base);
+}
+
 function seedDisplayedOrder(currentOrder, desiredOrder) {
   const desiredSet = new Set(desiredOrder);
   const surviving = currentOrder.filter((id) => desiredSet.has(id));
@@ -107,17 +144,6 @@ function computeDisplayLayout(order, rowMetaById, sectionLabels = {}) {
 
   const orderedRows = order.map((id) => rowMetaById.get(id)).filter(Boolean);
   const n = orderedRows.length;
-
-  // Which categories actually exist in game state (for pre-reserving dividers).
-  const existsInGameState = new Set();
-  const gameStateCountByCategory = new Map();
-  for (const meta of rowMetaById.values()) {
-    existsInGameState.add(meta.category);
-    gameStateCountByCategory.set(
-      meta.category,
-      (gameStateCountByCategory.get(meta.category) ?? 0) + 1,
-    );
-  }
 
   // Determine how many bottom cards have PHYSICALLY arrived in each bottom zone
   // by scanning contiguously from the bottom of displayOrder.
@@ -139,42 +165,31 @@ function computeDisplayLayout(order, rowMetaById, sectionLabels = {}) {
     bottomCursor--;
   }
 
-  // Top zone cards — split paying vs awaiting by actual category.
+  // Top zone — contiguous scan from the TOP for paying, same principle as
+  // skipped/eliminated from the bottom.  We scan through paying AND transit
+  // cards (skipped/eliminated mid-descent) — stopping only at a genuine
+  // 'awaiting' card.  This prevents a folding card that's still physically
+  // inside the paying block from creating a spurious "Awaiting Positions" section.
   let payCount = 0;
-  let awaitCount = 0;
-  for (let i = 0; i <= bottomCursor; i++) {
-    if (orderedRows[i].category === 'paying') payCount += 1;
-    else awaitCount += 1;
+  while (payCount <= bottomCursor && orderedRows[payCount].category !== 'awaiting') {
+    payCount++;
   }
+  const awaitCount = bottomCursor + 1 - payCount;
 
-  // Build section list.  Always include a section (even with 0 rows) when the
-  // category exists in game state so the divider is pre-reserved, preventing
-  // a layout shift (and card "dancing") when the first card arrives.
+  // Build section list — only include a section when cards are physically present.
+  // Headers appear/disappear as cards actually arrive, never ahead of time.
   const sections = [];
-  if (payCount > 0 || existsInGameState.has('paying')) {
-    sections.push({ category: 'paying',    count: payCount  });
-  }
-  if (awaitCount > 0 || existsInGameState.has('awaiting')) {
-    sections.push({ category: 'awaiting',  count: awaitCount });
-  }
-  if (skipCount > 0 || existsInGameState.has('skipped')) {
-    sections.push({ category: 'skipped',   count: skipCount  });
-  }
-  if (elimCount > 0 || existsInGameState.has('eliminated')) {
-    sections.push({ category: 'eliminated', count: elimCount });
-  }
-
-  // Remove leading empty sections (no point showing a divider before any content)
-  while (sections.length > 0 && sections[0].count === 0) sections.shift();
+  if (payCount   > 0) sections.push({ category: 'paying',    count: payCount   });
+  if (awaitCount > 0) sections.push({ category: 'awaiting',  count: awaitCount });
+  if (skipCount  > 0) sections.push({ category: 'skipped',   count: skipCount  });
+  if (elimCount  > 0) sections.push({ category: 'eliminated', count: elimCount  });
 
   let cursor = 0;
   for (const section of sections) {
     const baseLabel = sectionLabels[section.category] ?? CATEGORY_LABELS[section.category] ?? section.category;
-    // Show count from game state so the number is always correct.
-    const gameStateCount = gameStateCountByCategory.get(section.category) ?? 0;
     dividers.push({
       key: `${section.category}-${dividers.length}`,
-      label: `${baseLabel} (${gameStateCount})`,
+      label: `${baseLabel} (${section.count})`,
       targetY: y,
     });
     if (!firstSection) y += DIVIDER_HEIGHT;
@@ -214,6 +229,53 @@ function stepDisplayedOrder(currentOrder, desiredIndexMap, movingIds) {
   return changed ? nextOrder : currentOrder;
 }
 
+function getBottomContiguousMembership(order, rowMetaById) {
+  const skipped = new Set();
+  const eliminated = new Set();
+
+  const ordered = order
+    .map((id) => ({ id, meta: rowMetaById.get(id) }))
+    .filter((entry) => entry.meta);
+
+  let cursor = ordered.length - 1;
+  while (cursor >= 0 && ordered[cursor].meta.category === 'eliminated') {
+    eliminated.add(ordered[cursor].id);
+    cursor -= 1;
+  }
+
+  while (cursor >= 0 && ordered[cursor].meta.category === 'skipped') {
+    skipped.add(ordered[cursor].id);
+    cursor -= 1;
+  }
+
+  return { skipped, eliminated };
+}
+
+function isCardSettledInCurrentLayout(id, order, rowMetaById, desiredIndexMap) {
+  const index = order.indexOf(id);
+  if (index < 0) return true;
+
+  const desiredIndex = desiredIndexMap.get(id) ?? index;
+  if (desiredIndex !== index) return false;
+
+  const category = rowMetaById.get(id)?.category;
+  if (category !== 'skipped' && category !== 'eliminated') return true;
+
+  const membership = getBottomContiguousMembership(order, rowMetaById);
+  return category === 'skipped'
+    ? membership.skipped.has(id)
+    : membership.eliminated.has(id);
+}
+
+function isCardInCorrectCategoryZone(id, order, rowMetaById) {
+  const category = rowMetaById.get(id)?.category;
+  if (category !== 'skipped' && category !== 'eliminated') return true;
+  const membership = getBottomContiguousMembership(order, rowMetaById);
+  return category === 'skipped'
+    ? membership.skipped.has(id)
+    : membership.eliminated.has(id);
+}
+
 function easeTickProgress(progress) {
   return 0.5 - (Math.cos(progress * Math.PI) / 2);
 }
@@ -251,26 +313,34 @@ function computeSlots(players, gameState, payoutWinnerIds) {
     const ar = wheelOrderRank.get(a.id) ?? Number.MAX_SAFE_INTEGER;
     const br = wheelOrderRank.get(b.id) ?? Number.MAX_SAFE_INTEGER;
     return ar !== br ? ar - br
-      : a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' });
+      : comparePlayersByLobbyName(a, b);
   };
 
   const payoutResultRank = LEADERBOARD_POSITION_RANK.get(String(raceResult ?? ''));
+  const payoutDistanceById = new Map();
+  if (Number.isFinite(payoutResultRank)) {
+    active.forEach((p) => {
+      const closestRank = getClosestPositionRankToResult(p, payoutResultRank);
+      const dist = Number.isFinite(closestRank)
+        ? Math.abs(closestRank - payoutResultRank)
+        : Number.MAX_SAFE_INTEGER;
+      payoutDistanceById.set(p.id, dist);
+    });
+  }
+
   const byCloseness = (a, b) => {
-    const ac = getClosestPositionRankToResult(a, payoutResultRank);
-    const bc = getClosestPositionRankToResult(b, payoutResultRank);
-    const ad = Number.isFinite(ac) ? Math.abs(ac - payoutResultRank) : Number.MAX_SAFE_INTEGER;
-    const bd = Number.isFinite(bc) ? Math.abs(bc - payoutResultRank) : Number.MAX_SAFE_INTEGER;
+    const ad = payoutDistanceById.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+    const bd = payoutDistanceById.get(b.id) ?? Number.MAX_SAFE_INTEGER;
     return ad !== bd ? ad - bd
-      : a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' });
+      : comparePlayersByLobbyName(a, b);
   };
   const byPosition = (a, b) => {
     const ar = LEADERBOARD_POSITION_RANK.get(getLeaderboardPosition(a)) ?? Number.MAX_SAFE_INTEGER;
     const br = LEADERBOARD_POSITION_RANK.get(getLeaderboardPosition(b)) ?? Number.MAX_SAFE_INTEGER;
     return ar !== br ? ar - br
-      : a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' });
+      : comparePlayersByLobbyName(a, b);
   };
-  const byName = (a, b) =>
-    a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' });
+  const byName = (a, b) => comparePlayersByLobbyName(a, b);
 
   // ── Mode flags ───────────────────────────────────────────────────────────
   const useBettingOrder = currentStage === 'BETTING' ||
@@ -285,7 +355,7 @@ function computeSlots(players, gameState, payoutWinnerIds) {
 
   const awaiting = active
     .filter((p) => getLeaderboardPosition(p) === null)
-    .sort(useBettingOrder ? byWheelOrder : byName);
+    .sort(byName);
 
   const skipped = skippedFolded.slice().sort(useBettingOrder ? byWheelOrder : byName);
   const elim    = eliminated.slice().sort(byName);
@@ -298,8 +368,7 @@ function computeSlots(players, gameState, payoutWinnerIds) {
     let relRank  = 1;
     let prevDist = null;
     paying.forEach((p) => {
-      const cr   = getClosestPositionRankToResult(p, payoutResultRank);
-      const dist = Number.isFinite(cr) ? Math.abs(cr - payoutResultRank) : Number.MAX_SAFE_INTEGER;
+      const dist = payoutDistanceById.get(p.id) ?? Number.MAX_SAFE_INTEGER;
       if (prevDist !== null && dist !== prevDist) relRank++;
       closenessRankMap.set(p.id, relRank);
       prevDist = dist;
@@ -365,6 +434,7 @@ export default function LeaderboardPanel({
   activeTimer,
   wheelFocusPlayerId,
   payoutWinnerIds,
+  payoutTotalAmount,
   autoScrollEnabled,
   socket,
   getFavoriteColor,
@@ -398,6 +468,9 @@ export default function LeaderboardPanel({
   const rafRunning          = useRef(false);
   const scheduleEngineRef   = useRef(() => {});
   const schedulerStateRef   = useRef(SCHEDULER_STATE.IDLE);
+  const transitionZoneSinceRef = useRef(new Map()); // id -> performance.now() when entered correct zone
+  const transitionFadeTimersRef = useRef(new Map()); // id -> timeout handle
+  const transitionPopTimersRef = useRef(new Map()); // id -> timeout handle
 
   // ── React state (layout-level only) ──────────────────────────────────────
   const [lbHeaderHeight,    setLbHeaderHeight]    = useState(58);
@@ -427,6 +500,7 @@ export default function LeaderboardPanel({
     .join('|');
 
   const wheelOrderSignature = Array.isArray(wheelOrder) ? wheelOrder.join('|') : '';
+  const wheelOrderSet = useMemo(() => new Set(Array.isArray(wheelOrder) ? wheelOrder : []), [wheelOrderSignature]);
   const payoutWinnerSignature = payoutWinnerIds
     ? [...payoutWinnerIds].sort().join('|')
     : '';
@@ -464,6 +538,89 @@ export default function LeaderboardPanel({
   desiredIndexRef.current = desiredIndexMap;
   rowMetaByIdRef.current = rowMetaById;
 
+  const clearTransitionTimer = useCallback((id) => {
+    const handle = transitionFadeTimersRef.current.get(id);
+    if (handle) {
+      clearTimeout(handle);
+      transitionFadeTimersRef.current.delete(id);
+    }
+  }, []);
+
+  const clearTransitionPopTimer = useCallback((id) => {
+    const handle = transitionPopTimersRef.current.get(id);
+    if (handle) {
+      clearTimeout(handle);
+      transitionPopTimersRef.current.delete(id);
+    }
+  }, []);
+
+  const startTransitionFade = useCallback((id) => {
+    clearTransitionPopTimer(id);
+    setPlayerTransitions((prev) => {
+      const entry = prev[id];
+      if (!entry || entry.phase === 'fading') return prev;
+      return {
+        ...prev,
+        [id]: { ...entry, phase: 'fading' },
+      };
+    });
+
+    clearTransitionTimer(id);
+    const timer = setTimeout(() => {
+      setPlayerTransitions((prev) => {
+        if (!prev[id]) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      transitionFadeTimersRef.current.delete(id);
+    }, TRANSITION_FADE_MS);
+    transitionFadeTimersRef.current.set(id, timer);
+  }, [clearTransitionPopTimer, clearTransitionTimer]);
+
+  const startTransitionPopIn = useCallback((id, label) => {
+    clearTransitionPopTimer(id);
+    setPlayerTransitions((prev) => {
+      const existing = prev[id];
+      if (existing && existing.label === label && (existing.phase === 'pop-in' || existing.phase === 'announcing')) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [id]: { label, phase: 'pop-in' },
+      };
+    });
+
+    const timer = setTimeout(() => {
+      setPlayerTransitions((prev) => {
+        const entry = prev[id];
+        if (!entry || entry.phase !== 'pop-in') return prev;
+        return {
+          ...prev,
+          [id]: { ...entry, phase: 'announcing' },
+        };
+      });
+      transitionPopTimersRef.current.delete(id);
+    }, TRANSITION_POP_MS);
+    transitionPopTimersRef.current.set(id, timer);
+  }, [clearTransitionPopTimer]);
+
+  const maybeFadeTagsInCorrectZone = useCallback((order) => {
+    const now = performance.now();
+    pendingArrivalRef.current.forEach((id) => {
+      if (!isCardInCorrectCategoryZone(id, order, rowMetaByIdRef.current)) {
+        transitionZoneSinceRef.current.delete(id);
+        return;
+      }
+
+      const enteredAt = transitionZoneSinceRef.current.get(id) ?? now;
+      transitionZoneSinceRef.current.set(id, enteredAt);
+      if (now - enteredAt >= TRANSITION_IN_ZONE_MS) {
+        startTransitionFade(id);
+      }
+    });
+  }, [startTransitionFade]);
+
   const emitCardArrival = useCallback((id) => {
     const el = cardElsRef.current.get(id);
     if (el) {
@@ -473,13 +630,8 @@ export default function LeaderboardPanel({
       }));
     }
 
-    setPlayerTransitions((prev) => {
-      if (!prev[id] || prev[id].phase !== 'announcing') return prev;
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-  }, []);
+    startTransitionFade(id);
+  }, [startTransitionFade]);
 
   const commitDisplayOrder = useCallback((nextOrder) => {
     displayOrderRef.current = nextOrder;
@@ -544,9 +696,10 @@ export default function LeaderboardPanel({
         rafRunning.current = false;
         rafRef.current = null;
 
-        tween.order.forEach((id, index) => {
-          const desiredIndex = desiredIndexRef.current.get(id) ?? index;
-          if (desiredIndex === index) {
+        maybeFadeTagsInCorrectZone(tween.order);
+
+        tween.order.forEach((id) => {
+          if (isCardSettledInCurrentLayout(id, tween.order, rowMetaByIdRef.current, desiredIndexRef.current)) {
             movingIdsRef.current.delete(id);
             holdUntilRef.current.delete(id);
             if (pendingArrivalRef.current.has(id)) {
@@ -564,15 +717,17 @@ export default function LeaderboardPanel({
     };
 
     rafRef.current = requestAnimationFrame(tick);
-  }, [emitCardArrival]);
+  }, [emitCardArrival, maybeFadeTagsInCorrectZone, setRenderedCardPosition, setSchedulerState]);
 
   const beginTween = useCallback((nextOrder, durationMs = MOVE_TICK_MS) => {
+    const currentLayout = computeDisplayLayout(displayOrderRef.current, rowMetaByIdRef.current);
+    const currentYById = new Map(currentLayout.rows.map((row) => [row.id, row.targetY]));
     const nextLayout = computeDisplayLayout(nextOrder, rowMetaByIdRef.current);
     const endYById = new Map(nextLayout.rows.map((row) => [row.id, row.targetY]));
     const startYById = new Map();
 
     nextOrder.forEach((id) => {
-      const fallbackY = endYById.get(id) ?? 0;
+      const fallbackY = currentYById.get(id) ?? endYById.get(id) ?? 0;
       startYById.set(id, visualYRef.current.get(id) ?? fallbackY);
     });
 
@@ -618,14 +773,20 @@ export default function LeaderboardPanel({
     });
 
     if (needsTween) {
-      beginTween(nextOrder, MOVE_TICK_MS);
+      beginTween(nextOrder, MOVE_TWEEN_MS);
       return;
     }
 
     setSchedulerState(SCHEDULER_STATE.SETTLING);
-    currentOrder.forEach((id, index) => {
-      const desiredIndex = desiredIndexRef.current.get(id) ?? index;
-      if (movingIdsRef.current.has(id) && desiredIndex === index) {
+    maybeFadeTagsInCorrectZone(currentOrder);
+    currentOrder.forEach((id) => {
+      const settled = isCardSettledInCurrentLayout(
+        id,
+        currentOrder,
+        rowMetaByIdRef.current,
+        desiredIndexRef.current,
+      );
+      if (movingIdsRef.current.has(id) && settled) {
         movingIdsRef.current.delete(id);
         holdUntilRef.current.delete(id);
         if (pendingArrivalRef.current.has(id)) {
@@ -636,7 +797,7 @@ export default function LeaderboardPanel({
     });
 
     scheduleEngineRef.current();
-  }, [beginTween, emitCardArrival, setSchedulerState]);
+  }, [beginTween, emitCardArrival, maybeFadeTagsInCorrectZone, setSchedulerState]);
 
   const scheduleEngine = useCallback(() => {
     if (engineTimeoutRef.current) return;
@@ -685,17 +846,60 @@ export default function LeaderboardPanel({
         holdUntilRef.current.delete(id);
         movingIdsRef.current.delete(id);
         pendingArrivalRef.current.delete(id);
+        transitionZoneSinceRef.current.delete(id);
+        clearTransitionTimer(id);
+        clearTransitionPopTimer(id);
         cardElsRef.current.delete(id);
       }
     });
 
-    const seededOrder = seedDisplayedOrder(displayOrderRef.current, desiredOrder);
+    const hasPendingMovement =
+      pendingArrivalRef.current.size > 0
+      || movingIdsRef.current.size > 0
+      || holdUntilRef.current.size > 0
+      || currentStage === 'POSITION_ASSIGNMENT'
+      || currentStage === 'PAYOUT'
+      || [...rowMetaById.values()].some((row) => row.category === 'skipped' || row.category === 'eliminated');
+
+    // In quiet states (no bottom-transition context), use the computed layout
+    // order directly so initial spawns and lobby updates stay alphabetically
+    // sorted without transient pre-seeding jitter.
+    const seededOrder = hasPendingMovement
+      ? seedDisplayedOrder(displayOrderRef.current, desiredOrder)
+      : desiredOrder;
     if (!arraysEqual(seededOrder, displayOrderRef.current)) commitDisplayOrder(seededOrder);
 
     const currentLayout = computeDisplayLayout(seededOrder, rowMetaById);
     const currentYById = new Map(currentLayout.rows.map((row) => [row.id, row.targetY]));
     const finalLayout = computeDisplayLayout(desiredOrder, rowMetaById);
     const finalYById = new Map(finalLayout.rows.map((row) => [row.id, row.targetY]));
+
+    // Ensure every visible card has a stable visualY baseline before any
+    // tween begins. This prevents a one-frame snap to targetY on first swap.
+    seededOrder.forEach((id) => {
+      if (!visualYRef.current.has(id)) {
+        visualYRef.current.set(id, currentYById.get(id) ?? 0);
+      }
+    });
+
+    // Quiet alphabetical mode: no skip/elim transition context is active.
+    // Keep display order locked to desiredOrder and reflow all cards to their
+    // exact slots so new inserts shift neighbors cleanly without overlap.
+    if (!hasPendingMovement) {
+      desiredOrder.forEach((id, desiredIndex) => {
+        desiredIndexRef.current.set(id, desiredIndex);
+        const targetY = currentYById.get(id) ?? 0;
+        visualYRef.current.set(id, targetY);
+        holdUntilRef.current.delete(id);
+        movingIdsRef.current.delete(id);
+        pendingArrivalRef.current.delete(id);
+        transitionZoneSinceRef.current.delete(id);
+        setRenderedCardPosition(id, targetY, 0);
+      });
+
+      scheduleEngine();
+      return;
+    }
 
     desiredOrder.forEach((id, desiredIndex) => {
       const isNew = !displayIndexRef.current.has(id);
@@ -709,8 +913,12 @@ export default function LeaderboardPanel({
       const alreadyEnrolled = pendingArrivalRef.current.has(id)
         || movingIdsRef.current.has(id)
         || holdUntilRef.current.has(id);
+      const isPositionAssignmentMover = currentStage === 'POSITION_ASSIGNMENT' && wheelOrderSet.has(id);
+      const isPayoutMover = currentStage === 'PAYOUT' && rowMeta?.category === 'paying';
       const canDriveMovement = rowMeta?.category === 'skipped'
         || rowMeta?.category === 'eliminated'
+        || isPositionAssignmentMover
+        || isPayoutMover
         || alreadyEnrolled;
 
       desiredIndexRef.current.set(id, desiredIndex);
@@ -722,28 +930,51 @@ export default function LeaderboardPanel({
         holdUntilRef.current.delete(id);
         movingIdsRef.current.delete(id);
         pendingArrivalRef.current.delete(id);
+        transitionZoneSinceRef.current.delete(id);
         canvasRef.current?.setCardPosition?.(id, finalY, 0);
       } else if (needsTravel && canDriveMovement) {
-        holdUntilRef.current.set(id, now + MOVE_DELAY_MS);
-        movingIdsRef.current.delete(id);
-        pendingArrivalRef.current.add(id);
+        if (!alreadyEnrolled) {
+          const holdDelayMs = (isPositionAssignmentMover || isPayoutMover) ? 0 : MOVE_DELAY_MS;
+          holdUntilRef.current.set(id, now + holdDelayMs);
+          movingIdsRef.current.delete(id);
+          pendingArrivalRef.current.add(id);
+        }
+      } else if (alreadyEnrolled) {
+        // Keep enrolled movers/holders alive; the movement engine is the
+        // source of truth for when they are truly settled.
       } else {
         holdUntilRef.current.delete(id);
         movingIdsRef.current.delete(id);
         if (pendingArrivalRef.current.has(id)) {
           pendingArrivalRef.current.delete(id);
+          transitionZoneSinceRef.current.delete(id);
           emitCardArrival(id);
         }
       }
     });
 
     scheduleEngine();
-  }, [commitDisplayOrder, desiredOrder, emitCardArrival, rowMetaById, scheduleEngine]);
+  }, [
+    clearTransitionTimer,
+    commitDisplayOrder,
+    currentStage,
+    desiredOrder,
+    emitCardArrival,
+    rowMetaById,
+    scheduleEngine,
+    setRenderedCardPosition,
+    wheelOrderSet,
+  ]);
 
   // Cleanup active timers on unmount
   useEffect(() => () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     if (engineTimeoutRef.current) clearTimeout(engineTimeoutRef.current);
+    transitionFadeTimersRef.current.forEach((handle) => clearTimeout(handle));
+    transitionFadeTimersRef.current.clear();
+    transitionPopTimersRef.current.forEach((handle) => clearTimeout(handle));
+    transitionPopTimersRef.current.clear();
+    transitionZoneSinceRef.current.clear();
     setSchedulerState(SCHEDULER_STATE.IDLE);
   }, [setSchedulerState]);
 
@@ -759,6 +990,7 @@ export default function LeaderboardPanel({
     const currentCats = {};
     players.forEach((p) => { currentCats[p.id] = getCategory(p); });
 
+    let changed = false;
     const next = { ...playerTransitions };
     Object.keys(currentCats).forEach((pid) => {
       const prev = prevCategoriesRef.current[pid];
@@ -768,7 +1000,8 @@ export default function LeaderboardPanel({
       // If a player returns to paying/awaiting, always clear stale transition labels.
       if (curr === 'paying' || curr === 'awaiting') {
         pendingArrivalRef.current.delete(pid);
-        delete next[pid];
+        transitionZoneSinceRef.current.delete(pid);
+        if (next[pid]) startTransitionFade(pid);
         return;
       }
 
@@ -781,7 +1014,8 @@ export default function LeaderboardPanel({
 
         if (isAlreadySettled) {
           pendingArrivalRef.current.delete(pid);
-          delete next[pid];
+          transitionZoneSinceRef.current.delete(pid);
+          if (next[pid]) startTransitionFade(pid);
         } else {
           const label = curr === 'eliminated'
             ? 'ELIMINATED'
@@ -790,14 +1024,19 @@ export default function LeaderboardPanel({
               : p.folded
                 ? 'FOLDED'
                 : 'SKIPPED';
-          next[pid] = { phase: 'announcing', label };
+          const existing = next[pid];
+          if (!existing || existing.label !== label || existing.phase === 'fading') {
+            next[pid] = { phase: 'pop-in', label };
+            startTransitionPopIn(pid, label);
+            changed = true;
+          }
         }
       }
     });
-    setPlayerTransitions(next);
+    if (changed) setPlayerTransitions(next);
     prevCategoriesRef.current = currentCats;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [players]);
+  }, [clearTransitionPopTimer, clearTransitionTimer, players, playerTransitions, startTransitionFade, startTransitionPopIn]);
 
   // ── Header height ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -834,10 +1073,22 @@ export default function LeaderboardPanel({
 
   // ── Scroll to top on PAYOUT entry ─────────────────────────────────────────
   const prevStageRef = useRef(currentStage);
+  const [payoutScrollLocked, setPayoutScrollLocked] = useState(false);
   useEffect(() => {
-    if (currentStage === 'PAYOUT' && prevStageRef.current !== 'PAYOUT')
-      leaderboardRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    const entering = currentStage === 'PAYOUT' && prevStageRef.current !== 'PAYOUT';
     prevStageRef.current = currentStage;
+    if (!entering) {
+      if (currentStage !== 'PAYOUT') setPayoutScrollLocked(false);
+      return undefined;
+    }
+    leaderboardRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    setPayoutScrollLocked(true);
+    // Hold for 8.8s if there are winners with money, otherwise 2s
+    const hasMoney = payoutWinnerIds?.size > 0 && Number(payoutTotalAmount) > 0;
+    const lockMs = hasMoney ? 9200 : 2000;
+    const t = setTimeout(() => setPayoutScrollLocked(false), lockMs);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStage]);
 
   // ── Sticky section label ───────────────────────────────────────────────────
@@ -855,8 +1106,9 @@ export default function LeaderboardPanel({
     if (!STICKY_PHASES.includes(currentStage) || !activePlayerId) return null;
     const row = displayLayout.rows.find((r) => r.id === activePlayerId);
     if (!row) return null;
-    // Only sticky when the card's natural position is above the visible fold
-    return row.targetY < lbScrollTop ? activePlayerId : null;
+    // Only sticky when the card has fully scrolled above the visible area
+    // (bottom edge past the scroll top) so visible top-cards are never pinned.
+    return (row.targetY + ROW_HEIGHT) < lbScrollTop ? activePlayerId : null;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStage, activePlayerId, displayLayout.rows, lbScrollTop]);
 
@@ -898,10 +1150,20 @@ export default function LeaderboardPanel({
   }, [displayLayout, playerTransitions, activeTimer, wheelFocusPlayerId, currentStage, getFavoriteColor, activeStickyPlayerId, containerWidth]);
 
   // ── Auto scroll ────────────────────────────────────────────────────────────
+  // While the payout lock is active, keep the leaderboard pinned at the top.
+  useEffect(() => {
+    if (!payoutScrollLocked) return undefined;
+    const id = setInterval(() => {
+      const el = leaderboardRef.current;
+      if (el && el.scrollTop > 0) el.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 800);
+    return () => clearInterval(id);
+  }, [payoutScrollLocked]);
+
   const onLeaderboardWheel = useLeaderboardAutoScroll({
     containerRef: leaderboardRef,
     rowRefs,
-    enabled: scrollEnabled,
+    enabled: scrollEnabled && !payoutScrollLocked,
     focusPlayerId:    wheelFocusPlayerId ?? activeTimer?.playerId ?? null,
     speedPxPerSecond: LEADERBOARD_AUTO_SCROLL_SPEED_PX_PER_SECOND,
     edgePauseMs:      LEADERBOARD_AUTO_SCROLL_PAUSE_MS,
@@ -934,7 +1196,7 @@ export default function LeaderboardPanel({
     const rowDimmed   = dimmed || tokenSpent;
     const rowElim     = isEliminatedPlayer(player);
     const transition  = playerTransitions[player.id];
-    const showAnnounce = transition?.phase === 'announcing';
+    const showTransition = Boolean(transition);
 
     const isPodium = podiumTier !== null;
     const podiumText = '#0e0c08';
@@ -991,8 +1253,9 @@ export default function LeaderboardPanel({
           getFavoriteColor={getFavoriteColor}
         />
         <span style={{ ...s.lbName, color: isPodium ? podiumText : undefined }}>
-          {player.displayName}
+          {getPlayerDisplayName(player)}
         </span>
+        {isBotPlayer(player) && <span style={s.lbBotBadge}>BOT</span>}
         {isWheelFocus && !isOnClock && <span style={s.lbFocusBadge}>FOCUS</span>}
         {isOnClock && (
           <span style={{
@@ -1033,11 +1296,20 @@ export default function LeaderboardPanel({
             [{player.positions.join(', ')}]
           </span>
         )}
-        {rowElim && !showAnnounce && (
+        {rowElim && !showTransition && (
           <img src={DEATH_GIF_SRC} alt="Eliminated" style={s.lbDeathOverlay} />
         )}
-        {showAnnounce && (
-          <div style={s.lbTransitionOverlay} className="lb-transition-label-show">
+        {showTransition && (
+          <div
+            style={s.lbTransitionOverlay}
+            className={
+              transition?.phase === 'fading'
+                ? 'lb-transition-label-fade'
+                : transition?.phase === 'pop-in'
+                  ? 'lb-transition-label-pop-in'
+                  : 'lb-transition-label-announcing'
+            }
+          >
             <div style={s.lbTransitionLabel}>{transition.label}</div>
           </div>
         )}
@@ -1110,7 +1382,7 @@ export default function LeaderboardPanel({
           const podiumText  = '#0e0c08';
           const rowElim     = isEliminatedPlayer(player);
           const transition  = playerTransitions[player.id];
-          const showAnnounce = transition?.phase === 'announcing';
+          const showTransition = Boolean(transition);
 
           return (
             <div
@@ -1120,7 +1392,7 @@ export default function LeaderboardPanel({
                   rowRefs.current.set(id, el);
                   cardElsRef.current.set(id, el);
                   if (isSticky) {
-                    el.style.top = `${lbScrollTop + lbHeaderHeight + 40}px`;
+                    el.style.top = `${lbScrollTop + 4}px`;
                   } else {
                     el.style.top = `${visualYRef.current.get(id) ?? targetY}px`;
                   }
@@ -1134,20 +1406,29 @@ export default function LeaderboardPanel({
                 left: 0, right: 0,
                 height: ROW_HEIGHT,
                 pointerEvents: 'none',
-                ...(isSticky ? { top: lbScrollTop + lbHeaderHeight + 40, zIndex: 20 } : {}),
+                ...(isSticky ? { top: lbScrollTop + 4, zIndex: 20 } : {}),
               }}
             >
               {/* Sticky card: render full HTML card so it looks correct when pinned */}
               {isSticky && renderRow(row)}
 
               {/* Death GIF */}
-              {!isSticky && rowElim && !showAnnounce && (
+              {!isSticky && rowElim && !showTransition && (
                 <img src={DEATH_GIF_SRC} alt="Eliminated" style={s.lbDeathOverlay} />
               )}
 
               {/* Transition overlay (SKIPPED / FOLDED / ELIMINATED) */}
-              {!isSticky && showAnnounce && (
-                <div style={s.lbTransitionOverlay} className="lb-transition-label-show">
+              {!isSticky && showTransition && (
+                <div
+                  style={s.lbTransitionOverlay}
+                  className={
+                    transition?.phase === 'fading'
+                      ? 'lb-transition-label-fade'
+                      : transition?.phase === 'pop-in'
+                        ? 'lb-transition-label-pop-in'
+                        : 'lb-transition-label-announcing'
+                  }
+                >
                   <div style={s.lbTransitionLabel}>{transition.label}</div>
                 </div>
               )}
@@ -1205,6 +1486,15 @@ const s = {
   },
   lbRank:    { color: '#666', width: 28, flexShrink: 0 },
   lbName:    { flex: 1, fontWeight: 'bold' },
+  lbBotBadge: {
+    background: '#173f2a',
+    color: '#69d394',
+    fontSize: 10,
+    padding: '1px 5px',
+    borderRadius: 3,
+    fontWeight: 'bold',
+    letterSpacing: 0.4,
+  },
   lbBalance: { color: '#2ecc71', fontWeight: 'bold', minWidth: 60, textAlign: 'right' },
   lbPositions: {
     color: '#888',

@@ -2,6 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 
 const POSITIONS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', 'DNF'];
 
+function stripBotSuffix(name) {
+  return String(name ?? '').replace(/\s*\(BOT\)\s*$/i, '').trim();
+}
+
 // ── PlayerCard ──────────────────────────────────────────────────────────────
 function PlayerCard({ p, gameState, socket, onError, onSuccess, resurrectionBaseCash, onHostAction }) {
   const [expanded, setExpanded] = useState(false);
@@ -56,7 +60,7 @@ function PlayerCard({ p, gameState, socket, onError, onSuccess, resurrectionBase
       {/* Header row */}
       <div style={styles.playerCardHeader}>
         <div style={styles.playerCardLeft}>
-          <span style={styles.playerName}>{p.displayName}</span>
+          <span style={styles.playerName}>{stripBotSuffix(p.displayName)}</span>
           {p.isBot && <span style={styles.botBadge}>BOT</span>}
           <span style={styles.playerReal}>({p.realName})</span>
           <span style={styles.playerBal}>${Number(p.balance).toFixed(2)}</span>
@@ -214,6 +218,7 @@ function HostControls({ gameState, socket }) {
   const [botRaiseAggression, setBotRaiseAggression] = useState('NORMAL');
   const [botCascadeMode, setBotCascadeMode] = useState('AUTO');
   const [botVoteMode, setBotVoteMode] = useState('AUTO');
+  const [instantWheelSpin, setInstantWheelSpin] = useState(false);
   const [playerPanelOpen, setPlayerPanelOpen] = useState(true);
   const [debugPanelOpen, setDebugPanelOpen] = useState(false);
   const [debugSystemOpen, setDebugSystemOpen] = useState(false);
@@ -265,6 +270,7 @@ function HostControls({ gameState, socket }) {
 
   const buildBotSettingsPayload = (overrides = {}) => ({
     autoPick: overrides.autoPick ?? botAutoPick,
+    instantWheelSpin: overrides.instantWheelSpin ?? instantWheelSpin,
     decisionDelayMinMs: overrides.decisionDelayMinMs ?? Math.max(0, Math.round(Number(botDelayMinSec || 0) * 1000)),
     decisionDelayMaxMs: overrides.decisionDelayMaxMs ?? Math.max(0, Math.round(Number(botDelayMaxSec || 0) * 1000)),
     preBetMode: overrides.preBetMode ?? botPreBetMode,
@@ -373,6 +379,7 @@ function HostControls({ gameState, socket }) {
     setBotRaiseAggression(cfg.raiseAggression ?? 'NORMAL');
     setBotCascadeMode(cfg.cascadeMode ?? 'AUTO');
     setBotVoteMode(cfg.voteMode ?? 'AUTO');
+    setInstantWheelSpin(Boolean(cfg.instantWheelSpin));
   }, [gameState.debugTools, isBotSettingsDirty]);
 
   useEffect(() => {
@@ -382,6 +389,7 @@ function HostControls({ gameState, socket }) {
     const expected = buildBotSettingsPayload();
     const actual = {
       autoPick: Boolean(cfg.autoPick),
+      instantWheelSpin: Boolean(cfg.instantWheelSpin),
       decisionDelayMinMs: Number(cfg.decisionDelayMinMs ?? cfg.timeoutDelayMinMs ?? 500),
       decisionDelayMaxMs: Number(cfg.decisionDelayMaxMs ?? cfg.timeoutDelayMaxMs ?? 1500),
       preBetMode: cfg.preBetMode ?? 'AUTO',
@@ -394,6 +402,7 @@ function HostControls({ gameState, socket }) {
 
     if (
       expected.autoPick === actual.autoPick &&
+      expected.instantWheelSpin === actual.instantWheelSpin &&
       expected.decisionDelayMinMs === actual.decisionDelayMinMs &&
       expected.decisionDelayMaxMs === actual.decisionDelayMaxMs &&
       expected.preBetMode === actual.preBetMode &&
@@ -417,6 +426,7 @@ function HostControls({ gameState, socket }) {
     botRaiseAggression,
     botCascadeMode,
     botVoteMode,
+    instantWheelSpin,
   ]);
 
   return (
@@ -828,6 +838,19 @@ function HostControls({ gameState, socket }) {
                       }}
                     />
                     Bot Logic Enabled
+                  </label>
+                  <label style={styles.botMasterSwitchLabel}>
+                    <input
+                      type="checkbox"
+                      checked={instantWheelSpin}
+                      onChange={(e) => {
+                        const enabled = e.target.checked;
+                        setInstantWheelSpin(enabled);
+                        setIsBotSettingsDirty(true);
+                        applyBotSettings({ instantWheelSpin: enabled });
+                      }}
+                    />
+                    Instant Wheel Spin
                   </label>
                 </div>
               </>

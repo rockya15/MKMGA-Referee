@@ -315,22 +315,48 @@ code {
 }
 
 /* ── Leaderboard transition label animations ───────────────────────────────── */
-@keyframes lb-transition-label-show {
+@keyframes lb-transition-label-pop {
   0% {
     opacity: 0;
-    transform: scale(0.3) rotate(-8deg);
+    transform: scale(0.72) translateY(6px);
+    filter: blur(1px);
   }
-  50% {
-    transform: scale(1.15) rotate(2deg);
+  55% {
+    opacity: 1;
+    transform: scale(1.08) translateY(-1px);
+    filter: blur(0);
   }
   100% {
     opacity: 1;
-    transform: scale(1) rotate(0deg);
+    transform: scale(1) translateY(0);
+    filter: blur(0);
   }
 }
 
-.lb-transition-label-show {
-  animation: lb-transition-label-show 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+.lb-transition-label-pop-in {
+  animation: lb-transition-label-pop 0.38s cubic-bezier(0.22, 1.15, 0.36, 1) both;
+}
+
+.lb-transition-label-announcing {
+  opacity: 1;
+  transform: scale(1);
+}
+
+@keyframes lb-transition-label-fade {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.92);
+    filter: blur(1.5px);
+  }
+}
+
+.lb-transition-label-fade {
+  animation: lb-transition-label-fade 0.42s ease-out forwards;
 }
 
 /* ── Position grid avatar drop animation ───────────────────────────────────── */

@@ -442,6 +442,7 @@ function HostView({ gameState, socket }) {
               activeTimer={activeTimer}
               wheelFocusPlayerId={wheelFocusPlayerId}
               payoutWinnerIds={payoutWinnerIds}
+              payoutTotalAmount={payoutTotalAmount}
               autoScrollEnabled={leaderboardAutoScrollEnabled}
               socket={socket}
               getFavoriteColor={getFavoriteColor}

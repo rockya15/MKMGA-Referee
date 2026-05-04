@@ -26,6 +26,23 @@ function isEliminatedPlayer(player) {
   return Number(player.balance) <= 0 && !player.paidEntry;
 }
 
+function stripBotSuffix(name) {
+  return String(name ?? '').replace(/\s*\(BOT\)\s*$/i, '').trim();
+}
+
+function isBotPlayer(player) {
+  if (!player) return false;
+  if (Boolean(player.isBot)) return true;
+  const id = String(player.id ?? '').toLowerCase();
+  const realName = String(player.realName ?? '').toLowerCase();
+  return id.startsWith('bot-') || realName.startsWith('bot_');
+}
+
+function getPlayerDisplayName(player) {
+  const base = player?.displayName ?? player?.realName ?? String(player?.id ?? '');
+  return stripBotSuffix(base);
+}
+
 // ── Async texture cache ────────────────────────────────────────────────────
 const _texCache = new Map(); // url → Promise<PIXI.Texture|null>
 
@@ -91,6 +108,11 @@ class CardObject {
     });
     this.nameText.zIndex = 1;
     this.container.addChild(this.nameText);
+
+    // BOT badge near name
+    this.botBadgeCont = new PIXI.Container();
+    this.botBadgeCont.zIndex = 2;
+    this.container.addChild(this.botBadgeCont);
 
     // Balance text (rendered directly in card layer)
     this.balanceText = new PIXI.Text('', {
@@ -197,20 +219,44 @@ class CardObject {
 
     // ── Name ────────────────────────────────────────────────────────────────
     const nameX   = avatarX + AVATAR_SZ + EL_GAP;
-    const rawName = player.displayName || player.realName || String(player.id);
+    const rawName = getPlayerDisplayName(player);
+    const showBot = isBotPlayer(player);
     this.nameText.style.fill = isPodium ? podiumFill : (rowDimmed ? '#999999' : '#ffffff');
     this.nameText.text = rawName;
     this.nameText.x = nameX;
     this.nameText.y = Math.round(ROW_H / 2 - this.nameText.height / 2);
 
     // Truncate name if it would overlap badges / balance zone
-    const maxNameEnd = cardWidth - BALANCE_ZONE - CARD_PAD_H;
+    const botReserve = showBot ? 38 : 0;
+    const maxNameEnd = cardWidth - BALANCE_ZONE - CARD_PAD_H - botReserve;
     if (this.nameText.x + this.nameText.width > maxNameEnd) {
       let truncated = rawName;
       while (truncated.length > 1 && nameX + this.nameText.width > maxNameEnd) {
         truncated = truncated.slice(0, -1);
         this.nameText.text = truncated + '\u2026';
       }
+    }
+
+    this.botBadgeCont.removeChildren();
+    if (showBot) {
+      const txt = new PIXI.Text('BOT', {
+        fontSize: 10,
+        fontWeight: 'bold',
+        fill: '#69d394',
+        fontFamily: 'Arial, sans-serif',
+      });
+      const bw = txt.width + 10;
+      const bh = txt.height + 4;
+      const rect = new PIXI.Graphics();
+      rect.beginFill(0x173f2a);
+      rect.drawRoundedRect(0, 0, bw, bh, 3);
+      rect.endFill();
+      txt.x = 5;
+      txt.y = 2;
+      this.botBadgeCont.addChild(rect);
+      this.botBadgeCont.addChild(txt);
+      this.botBadgeCont.x = this.nameText.x + this.nameText.width + 6;
+      this.botBadgeCont.y = Math.round(ROW_H / 2 - bh / 2);
     }
 
     // ── Balance ─────────────────────────────────────────────────────────────
@@ -359,7 +405,7 @@ class CardObject {
     this.avatarFallback.drawCircle(x + AVATAR_SZ / 2, y + AVATAR_SZ / 2, AVATAR_SZ / 2);
     this.avatarFallback.endFill();
 
-    const initial = (player.displayName || player.realName || '?')[0]?.toUpperCase() ?? '?';
+    const initial = (getPlayerDisplayName(player) || '?')[0]?.toUpperCase() ?? '?';
     this.avatarInitial.text = initial;
     this.avatarInitial.x = x + AVATAR_SZ / 2 - this.avatarInitial.width  / 2;
     this.avatarInitial.y = y + AVATAR_SZ / 2 - this.avatarInitial.height / 2;
