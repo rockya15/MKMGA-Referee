@@ -108,10 +108,23 @@ function computeDisplayLayout(order, rowMetaById, sectionLabels = {}) {
   const orderedRows = order.map((id) => rowMetaById.get(id)).filter(Boolean);
   const n = orderedRows.length;
 
-  // Determine bottom zone sizes by scanning contiguously from the bottom of
-  // displayOrder. A category section only grows as cards physically arrive
-  // there via adjacent swaps — so cards visually descend one slot per tick
-  // rather than teleporting to their destination zone.
+  // Which categories actually exist in game state (for pre-reserving dividers).
+  const existsInGameState = new Set();
+  const gameStateCountByCategory = new Map();
+  for (const meta of rowMetaById.values()) {
+    existsInGameState.add(meta.category);
+    gameStateCountByCategory.set(
+      meta.category,
+      (gameStateCountByCategory.get(meta.category) ?? 0) + 1,
+    );
+  }
+
+  // Determine how many bottom cards have PHYSICALLY arrived in each bottom zone
+  // by scanning contiguously from the bottom of displayOrder.
+  // This drives which cards render inside each section — cards only enter a
+  // section visually once they have descended there via adjacent swaps.
+  // The divider is shown as soon as the category exists in game state, so the
+  // section header appears upfront (no mid-animation layout jump).
   let bottomCursor = n - 1;
 
   let elimCount = 0;
@@ -126,9 +139,7 @@ function computeDisplayLayout(order, rowMetaById, sectionLabels = {}) {
     bottomCursor--;
   }
 
-  // Top zone: split paying vs non-paying by actual category.
-  // Cards still descending (skipped/eliminated in transit) are folded into
-  // the awaiting bucket — they render dimmed with their badge, looking correct.
+  // Top zone cards — split paying vs awaiting by actual category.
   let payCount = 0;
   let awaitCount = 0;
   for (let i = 0; i <= bottomCursor; i++) {
@@ -136,18 +147,34 @@ function computeDisplayLayout(order, rowMetaById, sectionLabels = {}) {
     else awaitCount += 1;
   }
 
+  // Build section list.  Always include a section (even with 0 rows) when the
+  // category exists in game state so the divider is pre-reserved, preventing
+  // a layout shift (and card "dancing") when the first card arrives.
   const sections = [];
-  if (payCount  > 0) sections.push({ category: 'paying',    count: payCount  });
-  if (awaitCount > 0) sections.push({ category: 'awaiting', count: awaitCount });
-  if (skipCount  > 0) sections.push({ category: 'skipped',  count: skipCount  });
-  if (elimCount  > 0) sections.push({ category: 'eliminated', count: elimCount });
+  if (payCount > 0 || existsInGameState.has('paying')) {
+    sections.push({ category: 'paying',    count: payCount  });
+  }
+  if (awaitCount > 0 || existsInGameState.has('awaiting')) {
+    sections.push({ category: 'awaiting',  count: awaitCount });
+  }
+  if (skipCount > 0 || existsInGameState.has('skipped')) {
+    sections.push({ category: 'skipped',   count: skipCount  });
+  }
+  if (elimCount > 0 || existsInGameState.has('eliminated')) {
+    sections.push({ category: 'eliminated', count: elimCount });
+  }
+
+  // Remove leading empty sections (no point showing a divider before any content)
+  while (sections.length > 0 && sections[0].count === 0) sections.shift();
 
   let cursor = 0;
   for (const section of sections) {
     const baseLabel = sectionLabels[section.category] ?? CATEGORY_LABELS[section.category] ?? section.category;
+    // Show count from game state so the number is always correct.
+    const gameStateCount = gameStateCountByCategory.get(section.category) ?? 0;
     dividers.push({
       key: `${section.category}-${dividers.length}`,
-      label: `${baseLabel} (${section.count})`,
+      label: `${baseLabel} (${gameStateCount})`,
       targetY: y,
     });
     if (!firstSection) y += DIVIDER_HEIGHT;
@@ -580,7 +607,10 @@ export default function LeaderboardPanel({
     const nextOrder = stepDisplayedOrder(currentOrder, desiredIndexRef.current, movingIdsRef.current);
     const layoutForStep = computeDisplayLayout(nextOrder, rowMetaByIdRef.current);
     const layoutYById = new Map(layoutForStep.rows.map((row) => [row.id, row.targetY]));
-    const needsTween = nextOrder.some((id) => {
+    // Trigger a tween whenever cards swapped (order changed) OR a moving card
+    // hasn't yet visually settled at its layout target.
+    const swapped = nextOrder !== currentOrder;
+    const needsTween = swapped || nextOrder.some((id) => {
       if (!movingIdsRef.current.has(id)) return false;
       const visualY = visualYRef.current.get(id) ?? layoutYById.get(id) ?? 0;
       const targetY = layoutYById.get(id) ?? visualY;
@@ -670,11 +700,18 @@ export default function LeaderboardPanel({
     desiredOrder.forEach((id, desiredIndex) => {
       const isNew = !displayIndexRef.current.has(id);
       const displayIndex = seededOrder.indexOf(id);
+      const rowMeta = rowMetaById.get(id);
       const desiredY = currentYById.get(id) ?? 0;
       const finalY = finalYById.get(id) ?? desiredY;
       const visualY = visualYRef.current.get(id) ?? desiredY;
       const needsTravel = displayIndex !== desiredIndex
         || Math.abs(visualY - desiredY) > MOVE_SETTLE_PX;
+      const alreadyEnrolled = pendingArrivalRef.current.has(id)
+        || movingIdsRef.current.has(id)
+        || holdUntilRef.current.has(id);
+      const canDriveMovement = rowMeta?.category === 'skipped'
+        || rowMeta?.category === 'eliminated'
+        || alreadyEnrolled;
 
       desiredIndexRef.current.set(id, desiredIndex);
 
@@ -686,7 +723,7 @@ export default function LeaderboardPanel({
         movingIdsRef.current.delete(id);
         pendingArrivalRef.current.delete(id);
         canvasRef.current?.setCardPosition?.(id, finalY, 0);
-      } else if (needsTravel) {
+      } else if (needsTravel && canDriveMovement) {
         holdUntilRef.current.set(id, now + MOVE_DELAY_MS);
         movingIdsRef.current.delete(id);
         pendingArrivalRef.current.add(id);
