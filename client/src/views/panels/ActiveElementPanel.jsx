@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import SpinningWheel from '../../components/SpinningWheel';
 import Avatar from '../../components/Avatar';
 import StackedAvatars from '../../components/StackedAvatars';
@@ -66,6 +66,140 @@ function VoteElement({ players, groupVote, voteResult, voteTimeLeft, voteCounts,
   }
 
   return null;
+}
+
+// ── PositionGrid — tracks new slot assignments and plays drop-in animation ───
+function PositionGrid({ players, getFavoriteColor }) {
+  const SLOTS = Array.from({ length: 13 }, (_, i) => (i < 12 ? String(i + 1) : 'DNF'));
+
+  // Map<`${playerId}::${slot}`, {player, slot}> — avatars currently mid-drop
+  const [dropping, setDropping] = useState(new Map());
+
+  // Map<playerId, Set<slot>> — previous round's assignments; null = first render
+  const prevRef = useRef(null);
+
+  useEffect(() => {
+    // Build a snapshot of current assignments
+    const curr = new Map();
+    players.forEach((p) => {
+      if (Array.isArray(p.positions) && p.positions.length > 0) {
+        curr.set(p.id, new Set(p.positions));
+      }
+    });
+
+    if (prevRef.current === null) {
+      // Initial mount — don't animate existing assignments
+      prevRef.current = curr;
+      return;
+    }
+
+    const newDrops = new Map();
+    curr.forEach((slotSet, pid) => {
+      const prevSlots = prevRef.current.get(pid) ?? new Set();
+      slotSet.forEach((slot) => {
+        if (!prevSlots.has(slot)) {
+          const player = players.find((p) => p.id === pid);
+          if (player) newDrops.set(`${pid}::${slot}`, { player, slot });
+        }
+      });
+    });
+
+    prevRef.current = curr;
+    if (newDrops.size > 0) {
+      setDropping((prev) => {
+        const next = new Map(prev);
+        newDrops.forEach((val, key) => next.set(key, val));
+        return next;
+      });
+    }
+  }, [players]);
+
+  const handleDropEnd = useCallback((key) => {
+    setDropping((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Map(prev);
+      next.delete(key);
+      return next;
+    });
+  }, []);
+
+  const renderCell = (slot) => {
+    const allOwners = players.filter((p) => Array.isArray(p.positions) && p.positions.includes(slot));
+    const droppingIds = new Set(
+      allOwners.filter((p) => dropping.has(`${p.id}::${slot}`)).map((p) => p.id),
+    );
+    const settledOwners = allOwners.filter((p) => !droppingIds.has(p.id));
+    const droppingPlayers = allOwners.filter((p) => droppingIds.has(p.id));
+
+    return (
+      <div
+        key={slot}
+        style={{
+          ...s.positionCell,
+          position: 'relative',
+          overflow: 'visible',
+          background: allOwners.length > 0 ? '#1e3a2f' : '#1a1a1a',
+        }}
+      >
+        <div style={s.positionSlot}>{slot}</div>
+        <div style={s.positionOwner}>
+          {settledOwners.length > 0 ? (
+            <StackedAvatars
+              players={settledOwners}
+              size={32}
+              maxDisplay={3}
+              stackOffset={-10}
+              getFavoriteColor={getFavoriteColor}
+            />
+          ) : allOwners.length === 0 ? (
+            <div style={{ color: '#666', fontSize: 12 }}>—</div>
+          ) : null}
+        </div>
+
+        {/* Drop-in animation overlays — one per player mid-animation */}
+        {droppingPlayers.map((player) => {
+          const key = `${player.id}::${slot}`;
+          return (
+            <div
+              key={key}
+              className="pos-avatar-drop"
+              onAnimationEnd={() => handleDropEnd(key)}
+              style={{
+                position: 'absolute',
+                left: 0,
+                right: 0,
+                bottom: 8,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 50,
+                pointerEvents: 'none',
+              }}
+            >
+              <Avatar
+                player={player}
+                size={32}
+                borderWidth={2}
+                borderColor="#f0c040"
+                getFavoriteColor={getFavoriteColor}
+              />
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ ...s.positionGrid, paddingTop: 16 }}>
+      <div style={s.positionGridRow}>
+        {SLOTS.slice(0, 7).map(renderCell)}
+      </div>
+      <div style={{ ...s.positionGridRow, justifyContent: 'space-evenly' }}>
+        {SLOTS.slice(7).map(renderCell)}
+      </div>
+    </div>
+  );
 }
 
 function PayoutElement({ winners, raceResult, getFavoriteColor, payoutTotalAmount }) {
@@ -355,34 +489,9 @@ export default function ActiveElementPanel({
             <div style={s.wheelDone}>All positions assigned!</div>
           )}
 
-          {positionDraft && (() => {
-            const slots = Array.from({ length: 13 }, (_, i) => i < 12 ? String(i + 1) : 'DNF');
-            const renderCell = (slot) => {
-              const slotOwners = players.filter((p) => Array.isArray(p.positions) && p.positions.includes(slot));
-              return (
-                <div key={slot} style={{ ...s.positionCell, background: slotOwners.length > 0 ? '#1e3a2f' : '#1a1a1a' }}>
-                  <div style={s.positionSlot}>{slot}</div>
-                  <div style={s.positionOwner}>
-                    {slotOwners.length > 0 ? (
-                      <StackedAvatars players={slotOwners} size={32} maxDisplay={3} stackOffset={-10} getFavoriteColor={getFavoriteColor} />
-                    ) : (
-                      <div style={{ color: '#666', fontSize: 12 }}>—</div>
-                    )}
-                  </div>
-                </div>
-              );
-            };
-            return (
-              <div style={s.positionGrid}>
-                <div style={s.positionGridRow}>
-                  {slots.slice(0, 7).map(renderCell)}
-                </div>
-                <div style={{ ...s.positionGridRow, justifyContent: 'center' }}>
-                  {slots.slice(7).map(renderCell)}
-                </div>
-              </div>
-            );
-          })()}
+          {positionDraft && (
+            <PositionGrid players={players} getFavoriteColor={getFavoriteColor} />
+          )}
         </div>
       )}
     </div>
@@ -447,7 +556,7 @@ const s = {
   positionGrid: {
     display: 'flex',
     flexDirection: 'column',
-    gap: 6,
+    gap: 14,
     width: '100%',
     marginTop: 8,
   },
@@ -457,7 +566,7 @@ const s = {
     gap: 6,
     width: '100%',
   },
-  positionCell: { borderRadius: 6, padding: '6px 4px', textAlign: 'center', border: '1px solid #333', flex: '1 1 0', minWidth: 0 },
+  positionCell: { borderRadius: 6, padding: '6px 4px', textAlign: 'center', border: '1px solid #333', flex: '0 0 calc((100% - 36px) / 7)', minWidth: 0 },
   positionSlot: { fontSize: 13, fontWeight: 'bold', color: '#f0c040' },
   positionOwner: {
     fontSize: 11, color: '#ccc', marginTop: 4, minHeight: 34,

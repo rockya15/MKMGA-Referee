@@ -211,6 +211,7 @@ function HostControls({ gameState, socket }) {
   const [botPreBetMode, setBotPreBetMode] = useState('AUTO');
   const [botPositionMode, setBotPositionMode] = useState('AUTO');
   const [botBettingMode, setBotBettingMode] = useState('AUTO');
+  const [botRaiseAggression, setBotRaiseAggression] = useState('NORMAL');
   const [botCascadeMode, setBotCascadeMode] = useState('AUTO');
   const [botVoteMode, setBotVoteMode] = useState('AUTO');
   const [playerPanelOpen, setPlayerPanelOpen] = useState(true);
@@ -269,6 +270,7 @@ function HostControls({ gameState, socket }) {
     preBetMode: overrides.preBetMode ?? botPreBetMode,
     positionMode: overrides.positionMode ?? botPositionMode,
     bettingMode: overrides.bettingMode ?? botBettingMode,
+    raiseAggression: overrides.raiseAggression ?? botRaiseAggression,
     cascadeMode: overrides.cascadeMode ?? botCascadeMode,
     voteMode: overrides.voteMode ?? botVoteMode,
   });
@@ -368,6 +370,7 @@ function HostControls({ gameState, socket }) {
     setBotPreBetMode(cfg.preBetMode ?? 'AUTO');
     setBotPositionMode(cfg.positionMode ?? 'AUTO');
     setBotBettingMode(cfg.bettingMode ?? 'AUTO');
+    setBotRaiseAggression(cfg.raiseAggression ?? 'NORMAL');
     setBotCascadeMode(cfg.cascadeMode ?? 'AUTO');
     setBotVoteMode(cfg.voteMode ?? 'AUTO');
   }, [gameState.debugTools, isBotSettingsDirty]);
@@ -384,6 +387,7 @@ function HostControls({ gameState, socket }) {
       preBetMode: cfg.preBetMode ?? 'AUTO',
       positionMode: cfg.positionMode ?? 'AUTO',
       bettingMode: cfg.bettingMode ?? 'AUTO',
+      raiseAggression: cfg.raiseAggression ?? 'NORMAL',
       cascadeMode: cfg.cascadeMode ?? 'AUTO',
       voteMode: cfg.voteMode ?? 'AUTO',
     };
@@ -395,6 +399,7 @@ function HostControls({ gameState, socket }) {
       expected.preBetMode === actual.preBetMode &&
       expected.positionMode === actual.positionMode &&
       expected.bettingMode === actual.bettingMode &&
+      expected.raiseAggression === actual.raiseAggression &&
       expected.cascadeMode === actual.cascadeMode &&
       expected.voteMode === actual.voteMode
     ) {
@@ -409,6 +414,7 @@ function HostControls({ gameState, socket }) {
     botPreBetMode,
     botPositionMode,
     botBettingMode,
+    botRaiseAggression,
     botCascadeMode,
     botVoteMode,
   ]);
@@ -771,6 +777,14 @@ function HostControls({ gameState, socket }) {
                         <option value="CHECK_CALL">CHECK_CALL</option>
                         <option value="FOLD_IF_POSSIBLE">FOLD_IF_POSSIBLE</option>
                         <option value="RANDOM">RANDOM</option>
+                      </select>
+                    </label>
+                    <label style={styles.selectLabel}>Raise Risk
+                      <select style={styles.select} value={botRaiseAggression} disabled={botLogicDisabled} onChange={(e) => { setBotRaiseAggression(e.target.value); setIsBotSettingsDirty(true); }}>
+                        <option value="PASSIVE">PASSIVE</option>
+                        <option value="NORMAL">NORMAL</option>
+                        <option value="AGGRESSIVE">AGGRESSIVE</option>
+                        <option value="MANIAC">MANIAC</option>
                       </select>
                     </label>
                     <label style={styles.selectLabel}>Cascade

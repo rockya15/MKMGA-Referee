@@ -43,6 +43,7 @@ const BOT_DEFAULTS = {
   preBetMode: 'AUTO',
   positionMode: 'AUTO',
   bettingMode: 'AUTO',
+  raiseAggression: 'NORMAL',
   cascadeMode: 'AUTO',
   voteMode: 'AUTO',
 };
@@ -663,12 +664,20 @@ function getBotRandomRaiseTo(minRaiseTo, maxRaiseTo) {
     return min;
   }
 
-  // Small chance to jam to cap/all-in.
-  if (Math.random() < 0.12) {
-    return max;
-  }
+  const aggression = botSettings.raiseAggression ?? 'NORMAL';
+  // Jam probability by aggression level
+  const jamChance = aggression === 'PASSIVE' ? 0.04
+    : aggression === 'AGGRESSIVE' ? 0.30
+    : aggression === 'MANIAC' ? 0.55
+    : 0.12; // NORMAL
+  if (Math.random() < jamChance) return max;
 
-  // Simulate tapping variable raise chips like the phone UI.
+  // Early-stop probability (higher = smaller raises on average)
+  const earlyStopChance = aggression === 'PASSIVE' ? 0.65
+    : aggression === 'AGGRESSIVE' ? 0.18
+    : aggression === 'MANIAC' ? 0.05
+    : 0.35; // NORMAL
+
   const chips = [0.25, 0.5, 1, 2, 5];
   let total = min;
   const maxAdds = 1 + Math.floor(Math.random() * 14);
@@ -676,7 +685,7 @@ function getBotRandomRaiseTo(minRaiseTo, maxRaiseTo) {
     if (total >= max) break;
     const chip = chooseFrom(chips) ?? 0.25;
     total = roundToQuarter(Math.min(max, total + chip));
-    if (Math.random() < 0.35) break;
+    if (Math.random() < earlyStopChance) break;
   }
 
   return total;
@@ -775,11 +784,21 @@ function pickBotBetAction(player) {
     return { action };
   }
 
-  // AUTO: mostly check/call, occasional fold, rare raise when legal.
-  if (canRaise && maxRaiseTo >= minRaiseTo && Math.random() < 0.15) {
+  // AUTO: raise probability scales with raiseAggression.
+  const aggression = botSettings.raiseAggression ?? 'NORMAL';
+  const raiseChance = aggression === 'PASSIVE' ? 0.04
+    : aggression === 'AGGRESSIVE' ? 0.35
+    : aggression === 'MANIAC' ? 0.65
+    : 0.15; // NORMAL
+  if (canRaise && maxRaiseTo >= minRaiseTo && Math.random() < raiseChance) {
     return { action: 'raise', amount: getBotRandomRaiseTo(minRaiseTo, maxRaiseTo) };
   }
-  if (toCall > 0 && canFold && Math.random() < 0.12) {
+  // Fold probability inversely scales (aggressive bots rarely fold).
+  const foldChance = aggression === 'PASSIVE' ? 0.22
+    : aggression === 'AGGRESSIVE' ? 0.06
+    : aggression === 'MANIAC' ? 0.02
+    : 0.12; // NORMAL
+  if (toCall > 0 && canFold && Math.random() < foldChance) {
     return { action: 'fold' };
   }
   return { action: toCall > 0 ? 'call' : 'check' };
@@ -1134,6 +1153,7 @@ function updateBotSettings(payload = {}) {
     preBetMode: pickMode(payload.preBetMode, ['AUTO', 'PAY', 'SKIP', 'RANDOM'], botSettings.preBetMode),
     positionMode: pickMode(payload.positionMode, ['AUTO', 'RANDOM', 'SAFE_FIRST', 'PREFER_DNF'], botSettings.positionMode),
     bettingMode: pickMode(payload.bettingMode, ['AUTO', 'CHECK_CALL', 'FOLD_IF_POSSIBLE', 'RANDOM'], botSettings.bettingMode),
+    raiseAggression: pickMode(payload.raiseAggression, ['PASSIVE', 'NORMAL', 'AGGRESSIVE', 'MANIAC'], botSettings.raiseAggression),
     cascadeMode: pickMode(payload.cascadeMode, ['AUTO', 'CASCADE', 'ACCEPT_DNF', 'RANDOM'], botSettings.cascadeMode),
     voteMode: pickMode(payload.voteMode, ['AUTO', 'RANDOM', 'FIRST'], botSettings.voteMode),
   };
