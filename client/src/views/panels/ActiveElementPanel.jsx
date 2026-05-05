@@ -202,7 +202,7 @@ function PositionGrid({ players, getFavoriteColor }) {
   );
 }
 
-function PayoutElement({ winners, raceResult, getFavoriteColor, payoutTotalAmount }) {
+function PayoutElement({ winners, raceResult, getFavoriteColor, payoutTotalAmount, onDone }) {
   const shown = winners.slice(0, 3);
   const overflow = winners.slice(3);
   const overflowNames = overflow.map((p) => getFirstName(p.displayName || p.realName || p.id));
@@ -217,15 +217,23 @@ function PayoutElement({ winners, raceResult, getFavoriteColor, payoutTotalAmoun
   const sourceRef = useRef(null);
   const winnerTileRefs = useRef([]);
 
+  // Keep a stable ref to onDone so the timeout always calls the latest version
+  const onDoneRef = useRef(onDone);
+  useEffect(() => { onDoneRef.current = onDone; }, [onDone]);
+
   const winnerIds = winners.map((w) => w.id).join(',');
   useEffect(() => {
     setPhase('idle');
     setCoins([]);
     setCaughtSet(new Set());
-    if (winners.length === 0 || totalAmount === 0) return undefined;
+    if (winners.length === 0 || totalAmount === 0) {
+      // No animation — signal scroll-unlock after 5 seconds
+      const t = setTimeout(() => onDoneRef.current?.(), 5000);
+      return () => clearTimeout(t);
+    }
     const t1 = setTimeout(() => setPhase('total'), 300);
     const t2 = setTimeout(() => setPhase('split'), 5300);
-    const t3 = setTimeout(() => setPhase('done'), 8800);
+    const t3 = setTimeout(() => { setPhase('done'); onDoneRef.current?.(); }, 8800);
     return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [winnerIds, totalAmount]);
@@ -363,6 +371,7 @@ export default function ActiveElementPanel({
   // payout state
   payoutWinners,
   payoutTotalAmount,
+  onPayoutEffectDone,
   getFavoriteColor,
 }) {
   const { progress } = usePanelProgress();
@@ -396,7 +405,7 @@ export default function ActiveElementPanel({
 
       {elementType === 'payout' && (
         <div style={s.centeredWrap}>
-          <PayoutElement winners={payoutWinners} raceResult={raceResult} getFavoriteColor={getFavoriteColor} payoutTotalAmount={payoutTotalAmount} />
+          <PayoutElement winners={payoutWinners} raceResult={raceResult} getFavoriteColor={getFavoriteColor} payoutTotalAmount={payoutTotalAmount} onDone={onPayoutEffectDone} />
         </div>
       )}
 

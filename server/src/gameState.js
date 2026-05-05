@@ -208,12 +208,37 @@ class GameState {
     return this.players.some((player) => player.id !== exceptPlayerId && player.realName.toLowerCase() === String(realName).toLowerCase());
   }
 
-  addOrRejoinPlayer(socketId, playerData) {
+  // Validate join fields without mutating state (used by the pre-drawing REST check)
+  validateJoin(playerData) {
     if (!this.hostSettings.lobbyOpen || this.currentStage !== STAGES.LOBBY) {
       return { error: 'Registration is closed. The game is already in progress.' };
     }
-
     const displayName = String(playerData.displayName || '').trim();
+    const realName = String(playerData.realName || '').trim();
+    const cashAmount = Number(playerData.cashAmount);
+    if (!displayName || !realName) {
+      return { error: 'Display name and real name are required.' };
+    }
+    if (this.getDisplayNameTaken(displayName)) {
+      return { error: 'Display name already exists.' };
+    }
+    if (this.getRealNameTaken(realName)) {
+      return { error: 'Real name already exists.' };
+    }
+    if (!Number.isFinite(cashAmount) || cashAmount <= 0) {
+      return { error: 'Cash amount must be greater than $0.00.' };
+    }
+    if (!this.isQuarterMultiple(cashAmount)) {
+      return { error: 'Cash amount must be a multiple of $0.25.' };
+    }
+    if (Number.isFinite(this.hostSettings.maxCashCap) && cashAmount > this.hostSettings.maxCashCap) {
+      return { error: `Cash amount exceeds max cap of $${this.hostSettings.maxCashCap.toFixed(2)}.` };
+    }
+    return { ok: true };
+  }
+
+  addOrRejoinPlayer(socketId, playerData) {
+    if (!this.hostSettings.lobbyOpen || this.currentStage !== STAGES.LOBBY) {
     const realName = String(playerData.realName || '').trim();
     const cashAmount = Number(playerData.cashAmount);
     const password = String(playerData.password || '').trim();
@@ -267,6 +292,8 @@ class GameState {
       isBot: Boolean(playerData.isBot),
       favoriteColor,
       profileImageUrl: String(playerData.profileImageUrl || '').trim() || null,
+      drawingImageUrl: String(playerData.drawingImageUrl || '').trim() || null,
+      drawingPrompt: String(playerData.drawingPrompt || '').trim() || null,
       eliminationState: 'alive',
       noRevive: false,
       eliminationSummary: null,

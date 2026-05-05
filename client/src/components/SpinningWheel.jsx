@@ -15,6 +15,20 @@ function getSegmentColors(count) {
   return Array.from({ length: count }, (_, i) => palette[i % palette.length]);
 }
 
+// Returns '#000' if the hex color is bright enough to make white text unreadable,
+// otherwise returns '#fff'.
+function getContrastTextColor(hex) {
+  const clean = String(hex ?? '').replace('#', '');
+  if (clean.length !== 6) return '#fff';
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return '#fff';
+  // Perceived luminance (0–255 range), threshold 186 matches WCAG guidance
+  const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+  return luminance > 186 ? '#000' : '#fff';
+}
+
 function easeOut(t) {
   return 1 - Math.pow(1 - t, 4);
 }
@@ -91,7 +105,7 @@ export default function SpinningWheel({ segments, targetIndex, spinning, onSpinC
       ctx.translate(x, y);
       ctx.rotate(labelAngle + Math.PI / 2);
       ctx.globalAlpha = isDimmed ? dimAmount : 1;
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = getContrastTextColor(colors[i]);
       ctx.font = `bold ${Math.max(10, Math.min(18, Math.floor(radius / n * 1.2)))}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';

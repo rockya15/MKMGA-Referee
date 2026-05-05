@@ -1270,6 +1270,12 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
+// Ensure player drawings directory exists
+const drawingsDir = path.join(__dirname, '../uploads/player-drawings');
+if (!fs.existsSync(drawingsDir)) {
+  fs.mkdirSync(drawingsDir, { recursive: true });
+}
+
 // Configure multer for image uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -1296,6 +1302,25 @@ const upload = multer({
   }
 });
 
+// Configure multer for drawing uploads (PNG only, 2MB max)
+const drawingStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, drawingsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + '.png');
+  }
+});
+const uploadDrawing = multer({
+  storage: drawingStorage,
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'image/png') return cb(null, true);
+    cb(new Error('Only PNG files are allowed for drawings!'));
+  }
+});
+
 // Middleware
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../../client/dist'))); // Assuming client build
@@ -1315,6 +1340,30 @@ app.post('/api/upload-profile', (req, res) => {
     }
     res.json({ imageUrl: `/uploads/player-images/${req.file.filename}` });
   });
+});
+
+app.post('/api/upload-drawing', (req, res) => {
+  uploadDrawing.single('drawing')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'File too large. Maximum drawing size is 2MB.' });
+      }
+      return res.status(400).json({ error: 'Upload failed.' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+    res.json({ imageUrl: `/uploads/player-drawings/${req.file.filename}` });
+  });
+});
+
+// Pre-validate join fields before the drawing step (no state mutation)
+app.post('/api/validate-join', (req, res) => {
+  const result = gameState.validateJoin(req.body || {});
+  if (result.error) {
+    return res.status(400).json({ error: result.error });
+  }
+  res.json({ ok: true });
 });
 
 // Socket.io connection

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import MoneyTicker from '../components/MoneyTicker';
 import Avatar from '../components/Avatar';
+import DrawingPrompt from '../components/DrawingPrompt';
 
 const ALL_POSITIONS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', 'DNF'];
 const GENTLE_DNF_SLOTS = [1, 2, 4, 8, 13];
@@ -1059,6 +1060,8 @@ function PlayerView({ gameState, socket }) {
 
 // ── JoinForm ─────────────────────────────────────────────────────────────────
 function JoinForm({ onJoin, onBack, error, maxCashCap }) {
+  const [step, setStep] = useState('details'); // 'details' | 'drawing'
+  const pendingData = useRef(null);
   const [formData, setFormData] = useState({
     displayName: '',
     realName: '',
@@ -1071,6 +1074,7 @@ function JoinForm({ onJoin, onBack, error, maxCashCap }) {
   const [checks, setChecks] = useState({ rules: false, fairy: false, bibi: false, opcc: false, fy: false });
   const [localError, setLocalError] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [validating, setValidating] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
 
   const handleImageChange = async (e) => {
@@ -1098,7 +1102,7 @@ function JoinForm({ onJoin, onBack, error, maxCashCap }) {
 
   const allChecked = checks.rules && checks.fairy && checks.bibi && checks.opcc && checks.fy;
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!/^#[0-9a-fA-F]{6}$/.test(formData.favoriteColor)) {
       setLocalError('Choose a valid color.');
@@ -1138,10 +1142,38 @@ function JoinForm({ onJoin, onBack, error, maxCashCap }) {
     }
     setLocalError(null);
     const rawCash = parseFloat(String(formData.cashAmount).replace(/[^0-9.]/g, ''));
-    onJoin({ ...formData, cashAmount: rawCash });
+    setValidating(true);
+    try {
+      const res = await fetch('/api/validate-join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...formData, cashAmount: rawCash }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setLocalError(data.error || 'Validation failed. Please try again.');
+        return;
+      }
+    } catch {
+      setLocalError('Could not reach server. Please try again.');
+      return;
+    } finally {
+      setValidating(false);
+    }
+    pendingData.current = { ...formData, cashAmount: rawCash };
+    setStep('drawing');
   };
 
   const displayError = localError || error;
+
+  if (step === 'drawing') {
+    return (
+      <DrawingPrompt
+        onDone={(drawingData) => onJoin({ ...pendingData.current, ...drawingData })}
+        onBack={() => setStep('details')}
+      />
+    );
+  }
 
   return (
     <div style={styles.root}>
@@ -1266,14 +1298,15 @@ function JoinForm({ onJoin, onBack, error, maxCashCap }) {
 
         <button
           type="submit"
+          disabled={validating}
           style={{
             ...styles.joinBtn,
-            opacity: allChecked ? 1 : 0.4,
-            cursor: allChecked ? 'pointer' : 'not-allowed',
+            opacity: allChecked && !validating ? 1 : 0.4,
+            cursor: allChecked && !validating ? 'pointer' : 'not-allowed',
             marginTop: 16,
           }}
         >
-          Join
+          {validating ? 'Checking…' : 'Join'}
         </button>
       </form>
     </div>

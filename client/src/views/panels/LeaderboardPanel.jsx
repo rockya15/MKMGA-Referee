@@ -435,6 +435,7 @@ export default function LeaderboardPanel({
   wheelFocusPlayerId,
   payoutWinnerIds,
   payoutTotalAmount,
+  payoutScrollReady,
   autoScrollEnabled,
   socket,
   getFavoriteColor,
@@ -1083,13 +1084,15 @@ export default function LeaderboardPanel({
     }
     leaderboardRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     setPayoutScrollLocked(true);
-    // Hold for 8.8s if there are winners with money, otherwise 2s
-    const hasMoney = payoutWinnerIds?.size > 0 && Number(payoutTotalAmount) > 0;
-    const lockMs = hasMoney ? 9200 : 2000;
-    const t = setTimeout(() => setPayoutScrollLocked(false), lockMs);
-    return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStage]);
+
+  // Unlock scroll once the payout effect signals it has finished
+  useEffect(() => {
+    if (payoutScrollReady && currentStage === 'PAYOUT') {
+      setPayoutScrollLocked(false);
+    }
+  }, [payoutScrollReady, currentStage]);
 
   // ── Sticky section label ───────────────────────────────────────────────────
   const stickySectionLabel = useMemo(() => {
@@ -1412,6 +1415,13 @@ export default function LeaderboardPanel({
               {/* Sticky card: render full HTML card so it looks correct when pinned */}
               {isSticky && renderRow(row)}
 
+              {/* Player positions — centered */}
+              {!isSticky && !showTransition && player.positions?.length > 0 && (
+                <span style={{ ...s.lbPositions, color: isPodium ? podiumText : s.lbPositions.color }}>
+                  [{player.positions.join(', ')}]
+                </span>
+              )}
+
               {/* Death GIF */}
               {!isSticky && rowElim && !showTransition && (
                 <img src={DEATH_GIF_SRC} alt="Eliminated" style={s.lbDeathOverlay} />
@@ -1500,8 +1510,9 @@ const s = {
     color: '#888',
     fontSize: 12,
     position: 'absolute',
+    top: '50%',
     left: '50%',
-    transform: 'translateX(-50%)',
+    transform: 'translate(-50%, -50%)',
     textAlign: 'center',
     pointerEvents: 'none',
     background: 'rgba(0,0,0,0.2)',

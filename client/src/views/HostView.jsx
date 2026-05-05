@@ -45,6 +45,8 @@ function HostView({ gameState, socket }) {
   const cascadeResultHoldTimeoutRef = useRef(null);
 
   const [payoutTotalAmount, setPayoutTotalAmount] = useState(0);
+  const [payoutScrollReady, setPayoutScrollReady] = useState(false);
+  const handlePayoutEffectDone = useCallback(() => setPayoutScrollReady(true), []);
   const prevGameStateRef = useRef({ currentStage, players });
 
   const clearCascadeSpinStartTimeout = useCallback(() => {
@@ -165,6 +167,7 @@ function HostView({ gameState, socket }) {
   useEffect(() => {
     const prev = prevGameStateRef.current;
     if (prev.currentStage !== 'PAYOUT' && currentStage === 'PAYOUT') {
+      setPayoutScrollReady(false);
       const winners = players.filter(
         (p) => p.paidEntry && !p.folded && p.positions?.includes(raceResult),
       );
@@ -424,6 +427,7 @@ function HostView({ gameState, socket }) {
               cascadePromptPlayer={cascadePromptPlayer}
               payoutWinners={payoutWinners}
               payoutTotalAmount={payoutTotalAmount}
+              onPayoutEffectDone={handlePayoutEffectDone}
               getFavoriteColor={getFavoriteColor}
             />
           </AnimatedPanel>
@@ -443,6 +447,7 @@ function HostView({ gameState, socket }) {
               wheelFocusPlayerId={wheelFocusPlayerId}
               payoutWinnerIds={payoutWinnerIds}
               payoutTotalAmount={payoutTotalAmount}
+              payoutScrollReady={payoutScrollReady}
               autoScrollEnabled={leaderboardAutoScrollEnabled}
               socket={socket}
               getFavoriteColor={getFavoriteColor}
