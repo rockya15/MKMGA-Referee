@@ -40,6 +40,7 @@ function randomHexColor() {
 const BOT_DEFAULTS = {
   autoPick: true,
   instantWheelSpin: false,
+  skipWheelAnimation: false,
   decisionDelayMinMs: 500,
   decisionDelayMaxMs: 1500,
   preBetMode: 'AUTO',
@@ -539,6 +540,35 @@ function maybeStartNextBettingTimer() {
   } else {
     timerManager.clearTimer();
   }
+}
+
+function autoAssignAllRemainingPositions() {
+  if (gameState.currentStage !== STAGES.POSITION_ASSIGNMENT) return;
+  timerManager.clearTimer();
+  clearBotActionTimeout();
+
+  let guard = 0;
+  while (guard++ < 50) {
+    const draft = gameState.positionDraft;
+    if (!draft) break;
+    const pickerId = gameState.wheelOrder?.[draft.currentPlayerIndex];
+    if (!pickerId) break;
+
+    const position = pickBotPosition(draft);
+    if (!position) break;
+
+    const result = gameState.assignPositionWithOptions(pickerId, position, { cascade: false });
+    if (result.error) break;
+
+    if (result.complete) {
+      finalizePositionAssignmentPhase();
+      emitGameState();
+      return;
+    }
+  }
+
+  // Should not reach here normally, but emit state to reflect partial progress
+  emitGameState();
 }
 
 function maybeStartPositionTimer() {
@@ -1165,6 +1195,7 @@ function updateBotSettings(payload = {}) {
   botSettings = {
     autoPick: typeof payload.autoPick === 'boolean' ? payload.autoPick : botSettings.autoPick,
     instantWheelSpin: typeof payload.instantWheelSpin === 'boolean' ? payload.instantWheelSpin : botSettings.instantWheelSpin,
+    skipWheelAnimation: typeof payload.skipWheelAnimation === 'boolean' ? payload.skipWheelAnimation : botSettings.skipWheelAnimation,
     decisionDelayMinMs: nextMin,
     decisionDelayMaxMs: nextMax,
     preBetMode: pickMode(payload.preBetMode, ['AUTO', 'PAY', 'SKIP', 'RANDOM'], botSettings.preBetMode),
@@ -1238,6 +1269,7 @@ function scheduleCascadeCompletionFallback(token, timeoutMs) {
 }
 
 function emitCascadeSpin(payload) {
+  gameState.cascadeSpinsThisRound = (gameState.cascadeSpinsThisRound || 0) + 1;
   const token = `${Date.now()}-${++cascadeSpinTokenCounter}-${Math.random().toString(36).slice(2, 8)}`;
   expectedCascadeSpinToken = token;
   const fallbackMs = payload?.targetPosition === 'DNF'
@@ -1359,11 +1391,15 @@ app.post('/api/upload-drawing', (req, res) => {
 
 // Pre-validate join fields before the drawing step (no state mutation)
 app.post('/api/validate-join', (req, res) => {
-  const result = gameState.validateJoin(req.body || {});
-  if (result.error) {
-    return res.status(400).json({ error: result.error });
+  try {
+    const result = gameState.validateJoin(req.body || {});
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error during validation. Please try again.' });
   }
-  res.json({ ok: true });
 });
 
 // Socket.io connection
@@ -1493,8 +1529,12 @@ io.on('connection', (socket) => {
   // HostView emits this when the wheel animation finishes — start the picker's timer now
   socket.on('spin-complete', () => {
     if (gameState.currentStage === STAGES.POSITION_ASSIGNMENT) {
-      maybeStartPositionTimer();
-      queueBotAutoAction();
+      if (botSettings.skipWheelAnimation) {
+        autoAssignAllRemainingPositions();
+      } else {
+        maybeStartPositionTimer();
+        queueBotAutoAction();
+      }
     }
   });
 

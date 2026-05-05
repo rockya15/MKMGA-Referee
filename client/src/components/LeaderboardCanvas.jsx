@@ -43,6 +43,12 @@ function getPlayerDisplayName(player) {
   return stripBotSuffix(base);
 }
 
+function getPayoutDelta(player) {
+  const history = Array.isArray(player?.balanceHistory) ? player.balanceHistory : [];
+  if (history.length < 2) return null;
+  return history[history.length - 1].balance - history[history.length - 2].balance;
+}
+
 // ── Async texture cache ────────────────────────────────────────────────────
 const _texCache = new Map(); // url → Promise<PIXI.Texture|null>
 
@@ -226,9 +232,8 @@ class CardObject {
     this.nameText.x = nameX;
     this.nameText.y = Math.round(ROW_H / 2 - this.nameText.height / 2);
 
-    // Truncate name if it would overlap badges / balance zone
-    const botReserve = showBot ? 38 : 0;
-    const maxNameEnd = cardWidth - BALANCE_ZONE - CARD_PAD_H - botReserve;
+    // Truncate name if it would overlap the balance zone
+    const maxNameEnd = cardWidth - BALANCE_ZONE - CARD_PAD_H;
     if (this.nameText.x + this.nameText.width > maxNameEnd) {
       let truncated = rawName;
       while (truncated.length > 1 && nameX + this.nameText.width > maxNameEnd) {
@@ -239,6 +244,7 @@ class CardObject {
 
     this.botBadgeCont.removeChildren();
     if (showBot) {
+      // Build badge
       const txt = new PIXI.Text('BOT', {
         fontSize: 10,
         fontWeight: 'bold',
@@ -255,14 +261,30 @@ class CardObject {
       txt.y = 2;
       this.botBadgeCont.addChild(rect);
       this.botBadgeCont.addChild(txt);
-      this.botBadgeCont.x = this.nameText.x + this.nameText.width + 6;
-      this.botBadgeCont.y = Math.round(ROW_H / 2 - bh / 2);
+
+      // Stack: name above, badge below, group centered on card
+      const GAP = 3;
+      const totalH = this.nameText.height + GAP + bh;
+      const groupTop = Math.round(ROW_H / 2 - totalH / 2);
+      this.nameText.y = groupTop;
+      this.botBadgeCont.x = nameX;
+      this.botBadgeCont.y = groupTop + this.nameText.height + GAP;
+    } else {
+      // No badge — just center the name
+      this.nameText.y = Math.round(ROW_H / 2 - this.nameText.height / 2);
     }
 
-    // ── Balance ─────────────────────────────────────────────────────────────
-    const numericBalance = Number(player.balance) || 0;
-    this.balanceText.text = `$${numericBalance.toFixed(2)}`;
-    this.balanceText.style.fill = isPodium ? podiumFill : '#2ecc71';
+    // ── Balance (shows win/loss delta in PAYOUT) ──────────────────────────
+    const payoutDelta = currentStage === 'PAYOUT' ? getPayoutDelta(player) : null;
+    if (payoutDelta !== null) {
+      const isZero = payoutDelta === 0;
+      this.balanceText.text = isZero ? '$0.00' : `${payoutDelta > 0 ? '+' : '-'}$${Math.abs(payoutDelta).toFixed(2)}`;
+      this.balanceText.style.fill = isPodium ? podiumFill : isZero ? '#555555' : (payoutDelta > 0 ? '#2ecc71' : '#e74c3c');
+    } else {
+      const numericBalance = Number(player.balance) || 0;
+      this.balanceText.text = `$${numericBalance.toFixed(2)}`;
+      this.balanceText.style.fill = isPodium ? podiumFill : '#2ecc71';
+    }
     this.balanceText.x = cardWidth - CARD_PAD_H - this.balanceText.width;
     this.balanceText.y = Math.round(ROW_H / 2 - this.balanceText.height / 2);
 
@@ -296,24 +318,54 @@ class CardObject {
     if (isWheelFocus && !isOnClock) badges.push({
       text: 'FOCUS', bg: null, color: '#f0c040', border: 0xf0c040,
     });
-    if (tokenLabel) badges.push({
-      text: tokenLabel,
-      bg:    isPodium ? 0x3e3210 : 0x5a1a1a,
-      color: isPodium ? podiumFill : '#ff6666',
-      border: null,
-    });
-    if (noReviveLabel) badges.push({
-      text: noReviveLabel,
-      bg:    isPodium ? 0x3e3210 : 0x4a3412,
-      color: isPodium ? podiumFill : '#f0c040',
-      border: null,
-    });
 
-    if (!badges.length) return;
+    if (!badges.length && !tokenLabel && !noReviveLabel) return;
 
     // Layout right-to-left before the balance zone
     let xRight = cardWidth - BALANCE_ZONE - CARD_PAD_H;
 
+    // ── Stacked token / noRevive group ──────────────────────────────────────
+    if (tokenLabel || noReviveLabel) {
+      const stackDefs = [
+        tokenLabel    ? { text: tokenLabel,    bg: isPodium ? 0x3e3210 : 0x5a1a1a, color: isPodium ? podiumFill : '#ff6666' } : null,
+        noReviveLabel ? { text: noReviveLabel, bg: isPodium ? 0x3e3210 : 0x4a3412, color: isPodium ? podiumFill : '#f0c040' } : null,
+      ].filter(Boolean);
+
+      const stackCont = new PIXI.Container();
+      let maxBw = 0;
+      let stackY = 0;
+
+      for (const item of stackDefs) {
+        const txt = new PIXI.Text(item.text, {
+          fontSize: BADGE_FONT, fill: item.color,
+          fontFamily: 'Arial, sans-serif', fontWeight: 'bold',
+        });
+        const bw = txt.width  + BADGE_PAD_H * 2;
+        const bh = txt.height + BADGE_PAD_V * 2;
+        maxBw = Math.max(maxBw, bw);
+
+        const wrap = new PIXI.Container();
+        const rect = new PIXI.Graphics();
+        rect.beginFill(item.bg);
+        rect.drawRoundedRect(0, 0, bw, bh, BADGE_RADIUS);
+        rect.endFill();
+        wrap.addChild(rect);
+        txt.x = BADGE_PAD_H;
+        txt.y = BADGE_PAD_V;
+        wrap.addChild(txt);
+        wrap.y = stackY;
+        stackCont.addChild(wrap);
+        stackY += bh + 2;
+      }
+
+      const totalStackH = stackY - 2;
+      stackCont.x = xRight - maxBw;
+      stackCont.y = Math.round(ROW_H / 2 - totalStackH / 2);
+      this.badgeCont.addChild(stackCont);
+      xRight = xRight - maxBw - BADGE_GAP;
+    }
+
+    // ── Horizontal badges (timer, focus) ────────────────────────────────────
     for (let i = badges.length - 1; i >= 0; i--) {
       const b    = badges[i];
       const wrap = new PIXI.Container();
@@ -422,15 +474,18 @@ const LeaderboardCanvas = forwardRef(function LeaderboardCanvas(
   { totalHeight, cardWidth, visualYRef, stickyPlayerId },
   ref,
 ) {
-  const canvasRef      = useRef(null);
+  const wrapRef       = useRef(null);
   const appRef         = useRef(null);
   const cardsRef       = useRef(new Map()); // id → CardObject
   const prevStickyRef  = useRef(null);
 
   // ── Mount Pixi App ────────────────────────────────────────────────────────
+  // Do NOT pass `view:` — let Pixi create its own canvas so every mount gets
+  // a fresh WebGL context. This avoids the StrictMode double-invoke issue
+  // where the context from the previous mount is destroyed, leaving the
+  // shared canvas element in an invalid state.
   useEffect(() => {
     const app = new PIXI.Application({
-      view:            canvasRef.current,
       width:           cardWidth,
       height:          Math.max(1, totalHeight),
       backgroundAlpha: 0,
@@ -438,6 +493,14 @@ const LeaderboardCanvas = forwardRef(function LeaderboardCanvas(
       resolution:      window.devicePixelRatio || 1,
       autoDensity:     true,
     });
+
+    Object.assign(app.view.style, {
+      position: 'absolute',
+      top: '0',
+      left: '0',
+      pointerEvents: 'none',
+    });
+    wrapRef.current.appendChild(app.view);
     appRef.current = app;
 
     // Each Pixi tick: read shared visualYRef and position all containers
@@ -450,7 +513,7 @@ const LeaderboardCanvas = forwardRef(function LeaderboardCanvas(
     });
 
     return () => {
-      app.destroy(false);
+      app.destroy(true); // true = also remove the canvas element
       appRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -519,9 +582,9 @@ const LeaderboardCanvas = forwardRef(function LeaderboardCanvas(
   }), [cardWidth, visualYRef]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}
+    <div
+      ref={wrapRef}
+      style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'none' }}
     />
   );
 });

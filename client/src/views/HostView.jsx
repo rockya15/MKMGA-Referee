@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import MoneyTicker from '../components/MoneyTicker';
 import MoneyDelta from '../components/MoneyDelta';
 import AnimatedPanel from '../components/AnimatedPanel';
 import LeaderboardPanel from './panels/LeaderboardPanel';
 import ActiveElementPanel from './panels/ActiveElementPanel';
-import FooterPanel from './panels/FooterPanel';
+import FooterDisplay from './panels/FooterDisplay';
 import { usePanelLayout } from '../hooks/usePanelLayout';
 
 // Which stages show the wheel panel
@@ -23,8 +23,9 @@ function getFavoriteColorStatic(player) {
 }
 
 function HostView({ gameState, socket }) {
-  const { currentStage, players: rawPlayers, wheelOrder, positionDraft, pot, raceNumber, entryFee, raceResult } = gameState;
-  const players = Array.isArray(rawPlayers) ? rawPlayers : [];
+  const { currentStage, players: rawPlayers, wheelOrder, positionDraft, pot, raceNumber, entryFee, raceResult, cascadeSpinsThisRound = 0 } = gameState;
+  // Memoize so footer and other child components don't re-render from unrelated HostView state changes
+  const players = useMemo(() => Array.isArray(rawPlayers) ? rawPlayers : [], [rawPlayers]);
 
   const [groupVote, setGroupVote] = useState(null);
   const [voteTimeLeft, setVoteTimeLeft] = useState(0);
@@ -367,6 +368,8 @@ function HostView({ gameState, socket }) {
   const wheelIsBusy = hasWheelElement && (spinning || cascadeSpinning);
   const leaderboardAutoScrollEnabled = currentStage !== 'RACE_PENDING_RESULT' && !wheelIsBusy;
 
+  const footerVisible = players.length > 0;
+  const footerMode = activeElementType ? 'leaderboard' : 'full';
   const layout = usePanelLayout({ currentStage, activeElementType });
 
   return (
@@ -432,13 +435,15 @@ function HostView({ gameState, socket }) {
             />
           </AnimatedPanel>
 
+          {/* Leaderboard column — contains the leaderboard + leaderboard-mode footer */}
+          <div style={{ ...styles.leaderboardCol, flex: layout.leaderboard.flexWeight, minWidth: layout.leaderboard.minWidth }}>
           <AnimatedPanel
             visible={layout.leaderboard.visible}
             enterFrom={layout.leaderboard.enterFrom}
             exitTo={layout.leaderboard.exitTo}
             duration={layout.leaderboard.duration}
             ease={layout.leaderboard.ease}
-            style={{ ...styles.leaderboardPanel, flex: layout.leaderboard.flexWeight, minWidth: layout.leaderboard.minWidth }}
+            style={styles.leaderboardPanel}
           >
             <LeaderboardPanel
               players={players}
@@ -454,18 +459,14 @@ function HostView({ gameState, socket }) {
               fullWidth={layout.leaderboard.fullWidth}
             />
           </AnimatedPanel>
-        </div>
 
-        <AnimatedPanel
-          visible={layout.footer.visible}
-          enterFrom={layout.footer.enterFrom}
-          exitTo={layout.footer.exitTo}
-          duration={layout.footer.duration}
-          ease={layout.footer.ease}
-          style={styles.footerPanel}
-        >
-          <FooterPanel />
-        </AnimatedPanel>
+          {/* Footer — leaderboard-only mode (sits below leaderboard column) */}
+          <FooterDisplay players={players} visible={footerMode === 'leaderboard' && footerVisible} raceNumber={raceNumber} cascadeSpinsThisRound={cascadeSpinsThisRound} />
+        </div>{/* end leaderboardCol */}
+        </div>{/* end topRow */}
+
+        {/* Footer — full-width mode (sits below both panels) */}
+        <FooterDisplay players={players} visible={footerMode === 'full' && footerVisible} raceNumber={raceNumber} cascadeSpinsThisRound={cascadeSpinsThisRound} />
       </div>
     </div>
   );
@@ -517,16 +518,20 @@ const styles = {
     display: 'flex',
     alignItems: 'stretch',
   },
+  leaderboardCol: {
+    display: 'flex',
+    flexDirection: 'column',
+    minWidth: 0,
+    minHeight: 0,
+    overflow: 'hidden',
+  },
   leaderboardPanel: {
+    flex: 1,
     minWidth: 0,
     minHeight: 0,
     overflow: 'hidden',
     display: 'flex',
     alignItems: 'stretch',
-  },
-  footerPanel: {
-    flexShrink: 0,
-    overflow: 'hidden',
   },
 };
 

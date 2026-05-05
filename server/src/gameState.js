@@ -56,6 +56,7 @@ class GameState {
       hostSettings: this.hostSettings,
       raceNumber: this.raceNumber,
       pot: this.pot,
+      cascadeSpinsThisRound: this.cascadeSpinsThisRound,
       wheelOrder: this.wheelOrder,
       entryFee: this.entryFee,
       positionDraft: this.positionDraft,
@@ -98,6 +99,7 @@ class GameState {
     this.hostSettings.resurrectionBaseCash = this.roundToQuarter(Math.max(0.25, Number(this.hostSettings.resurrectionBaseCash)));
     this.raceNumber = Number.isFinite(merged.raceNumber) ? merged.raceNumber : 1;
     this.pot = Number.isFinite(merged.pot) ? merged.pot : 0;
+    this.cascadeSpinsThisRound = Number.isFinite(merged.cascadeSpinsThisRound) ? merged.cascadeSpinsThisRound : 0;
     this.wheelOrder = Array.isArray(merged.wheelOrder) ? merged.wheelOrder : [];
     this.entryFee = merged.entryFee ?? this.getEntryFee();
     this.positionDraft = merged.positionDraft || null;
@@ -1033,6 +1035,7 @@ class GameState {
     this.positionDraft = null;
     this.bettingState = this.createEmptyBettingState();
     this.raceResult = null;
+    this.cascadeSpinsThisRound = 0;
     this.setStage(STAGES.PRE_BET);
 
     this.players.forEach((player) => {

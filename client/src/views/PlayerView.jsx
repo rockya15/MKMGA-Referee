@@ -1151,7 +1151,7 @@ function JoinForm({ onJoin, onBack, error, maxCashCap }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setLocalError(data.error || 'Validation failed. Please try again.');
+        setLocalError(data.error || `Something went wrong (HTTP ${res.status}). Please try again.`);
         return;
       }
     } catch {

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import SpinningWheel from '../../components/SpinningWheel';
 import Avatar from '../../components/Avatar';
 import StackedAvatars from '../../components/StackedAvatars';
+import BalanceGraph from '../../components/BalanceGraph';
 import { usePanelProgress } from '../../context/PanelProgressContext';
 
 function getFirstName(name) {
@@ -316,6 +317,25 @@ function PayoutElement({ winners, raceResult, getFavoriteColor, payoutTotalAmoun
 
       {overflow.length > 0 && (
         <div style={s.payoutOverflowText}>+{overflow.length} more: {overflowNames.join(', ')}</div>
+      )}
+
+      {/* Balance history charts — shown after money flies to winners */}
+      {phase === 'done' && shown.some((p) => Array.isArray(p.balanceHistory) && p.balanceHistory.length >= 2) && (
+        <div style={s.payoutChartsRow}>
+          {shown.map((player) =>
+            Array.isArray(player.balanceHistory) && player.balanceHistory.length >= 2 ? (
+              <div key={player.id} style={s.payoutChartWrap}>
+                <div style={s.payoutChartLabel}>{getFirstName(player.displayName || player.realName || player.id)}</div>
+                <BalanceGraph
+                  history={player.balanceHistory}
+                  width={shown.length === 1 ? 280 : 190}
+                  height={80}
+                  color={getFavoriteColor?.(player)}
+                />
+              </div>
+            ) : null
+          )}
+        </div>
       )}
 
       {/* Flying coins */}
@@ -712,4 +732,15 @@ const s = {
   },
   payoutSplitHint: { fontSize: 13, color: '#c8a830', marginTop: 6 },
   payoutOverflowText: { fontSize: 13, color: '#d8c58f', lineHeight: 1.3, maxWidth: '100%' },
+  payoutChartsRow: {
+    display: 'flex', flexDirection: 'row', flexWrap: 'wrap',
+    gap: 14, justifyContent: 'center', marginTop: 8, width: '100%',
+  },
+  payoutChartWrap: {
+    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+  },
+  payoutChartLabel: {
+    fontSize: 11, fontWeight: 'bold', color: '#aaa',
+    textTransform: 'uppercase', letterSpacing: 0.5,
+  },
 };

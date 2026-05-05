@@ -331,8 +331,11 @@ function computeSlots(players, gameState, payoutWinnerIds) {
   const byCloseness = (a, b) => {
     const ad = payoutDistanceById.get(a.id) ?? Number.MAX_SAFE_INTEGER;
     const bd = payoutDistanceById.get(b.id) ?? Number.MAX_SAFE_INTEGER;
-    return ad !== bd ? ad - bd
-      : comparePlayersByLobbyName(a, b);
+    if (ad !== bd) return ad - bd;
+    // Tiebreak: same distance → lower position rank first (e.g. #4 before #6 when both equidistant)
+    const ar = getClosestPositionRankToResult(a, payoutResultRank);
+    const br = getClosestPositionRankToResult(b, payoutResultRank);
+    return ar !== br ? ar - br : comparePlayersByLobbyName(a, b);
   };
   const byPosition = (a, b) => {
     const ar = LEADERBOARD_POSITION_RANK.get(getLeaderboardPosition(a)) ?? Number.MAX_SAFE_INTEGER;
@@ -361,17 +364,14 @@ function computeSlots(players, gameState, payoutWinnerIds) {
   const elim    = eliminated.slice().sort(byName);
 
   // ── Closeness rank map for paying section ────────────────────────────────
-  // Dense ranking: ties share the same rank, next distinct distance group
-  // gets rank+1 (not rank+tieCount). So #1,#2,#2,#3,#3,#4,… not #1,#2,#2,#4.
+  // Rank = distance + 1: dist=0 (hit it) → #1, dist=1 (1 off) → #2, etc.
+  // This means if nobody hit the position, the closest group shows as #2, not #1.
   const closenessRankMap = new Map();
   if (usePayoutCloseness) {
-    let relRank  = 1;
-    let prevDist = null;
     paying.forEach((p) => {
       const dist = payoutDistanceById.get(p.id) ?? Number.MAX_SAFE_INTEGER;
-      if (prevDist !== null && dist !== prevDist) relRank++;
-      closenessRankMap.set(p.id, relRank);
-      prevDist = dist;
+      const rank = Number.isFinite(dist) ? dist + 1 : null;
+      closenessRankMap.set(p.id, rank);
     });
   }
 
@@ -497,6 +497,7 @@ export default function LeaderboardPanel({
       p?.folded ? 1 : 0,
       p?.eliminationState ?? '',
       Array.isArray(p?.positions) ? p.positions.join(',') : '',
+      Number(p?.balance ?? 0).toFixed(2),
     ].join(':'))
     .join('|');
 
@@ -954,8 +955,28 @@ export default function LeaderboardPanel({
       }
     });
 
+    // PAYOUT: instead of the adjacent-swap step engine (which can leave cards
+    // in the wrong final order when multiple cards move simultaneously), fire a
+    // single bulk tween that slides every paying card directly to its correct
+    // closeness-sorted slot. Subsequent effect fires (e.g. balance updates)
+    // are no-ops because seededOrder === desiredOrder once the tween commits.
+    if (currentStage === 'PAYOUT') {
+      desiredOrder.forEach((id) => {
+        holdUntilRef.current.delete(id);
+        movingIdsRef.current.delete(id);
+        pendingArrivalRef.current.delete(id);
+      });
+      if (!arraysEqual(seededOrder, desiredOrder)) {
+        beginTween(desiredOrder, 600);
+      } else {
+        scheduleEngine();
+      }
+      return;
+    }
+
     scheduleEngine();
   }, [
+    beginTween,
     clearTransitionTimer,
     commitDisplayOrder,
     currentStage,
@@ -1255,10 +1276,12 @@ export default function LeaderboardPanel({
           borderColor={getFavoriteColor(player)}
           getFavoriteColor={getFavoriteColor}
         />
-        <span style={{ ...s.lbName, color: isPodium ? podiumText : undefined }}>
-          {getPlayerDisplayName(player)}
-        </span>
-        {isBotPlayer(player) && <span style={s.lbBotBadge}>BOT</span>}
+        <div style={s.lbNameGroup}>
+          <span style={{ ...s.lbName, color: isPodium ? podiumText : undefined }}>
+            {getPlayerDisplayName(player)}
+          </span>
+          {isBotPlayer(player) && <span style={s.lbBotBadge}>BOT</span>}
+        </div>
         {isWheelFocus && !isOnClock && <span style={s.lbFocusBadge}>FOCUS</span>}
         {isOnClock && (
           <span style={{
@@ -1269,31 +1292,52 @@ export default function LeaderboardPanel({
             {activeTimer.timeLeft}s
           </span>
         )}
-        {tokenLabel && (
-          <span style={{
-            ...s.lbNoToken,
-            background: isPodium ? '#3e3210' : s.lbNoToken.background,
-            color:      isPodium ? '#121212' : s.lbNoToken.color,
-          }}>
-            {tokenLabel}
-          </span>
+        {(tokenLabel || noReviveLabel) && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'flex-start' }}>
+            {tokenLabel && (
+              <span style={{
+                ...s.lbNoToken,
+                background: isPodium ? '#3e3210' : s.lbNoToken.background,
+                color:      isPodium ? '#121212' : s.lbNoToken.color,
+              }}>
+                {tokenLabel}
+              </span>
+            )}
+            {noReviveLabel && (
+              <span style={{
+                ...s.lbNoRevive,
+                background: isPodium ? '#3e3210' : s.lbNoRevive.background,
+                color:      isPodium ? '#121212' : s.lbNoRevive.color,
+              }}>
+                {noReviveLabel}
+              </span>
+            )}
+          </div>
         )}
-        {noReviveLabel && (
-          <span style={{
-            ...s.lbNoRevive,
-            background: isPodium ? '#3e3210' : s.lbNoRevive.background,
-            color:      isPodium ? '#121212' : s.lbNoRevive.color,
-          }}>
-            {noReviveLabel}
-          </span>
-        )}
-        <MoneyDelta value={player.balance}>
-          <MoneyTicker
-            value={player.balance}
-            prefix="$"
-            style={{ ...s.lbBalance, color: isPodium ? podiumText : s.lbBalance.color }}
-          />
-        </MoneyDelta>
+        {(() => {
+          const _h = currentStage === 'PAYOUT' ? (player.balanceHistory ?? []) : [];
+          const _delta = _h.length >= 2 ? _h[_h.length - 1].balance - _h[_h.length - 2].balance : null;
+          if (_delta !== null) {
+            const isZero = _delta === 0;
+            return (
+              <span style={{
+                ...s.lbBalance,
+                color: isPodium ? podiumText : isZero ? '#555555' : (_delta > 0 ? '#2ecc71' : '#e74c3c'),
+              }}>
+                {isZero ? '$0.00' : `${_delta > 0 ? '+' : '-'}$${Math.abs(_delta).toFixed(2)}`}
+              </span>
+            );
+          }
+          return (
+            <MoneyDelta value={player.balance}>
+              <MoneyTicker
+                value={player.balance}
+                prefix="$"
+                style={{ ...s.lbBalance, color: isPodium ? podiumText : s.lbBalance.color }}
+              />
+            </MoneyDelta>
+          );
+        })()}
         {player.positions?.length > 0 && (
           <span style={{ ...s.lbPositions, color: isPodium ? podiumText : s.lbPositions.color }}>
             [{player.positions.join(', ')}]
@@ -1457,7 +1501,7 @@ const s = {
     minWidth: LEADERBOARD_PANEL_WIDTH,
     minHeight: 0,
     height: '100%',
-    padding: '0 18px 20px',
+    padding: `0 18px ${DIVIDER_HEIGHT / 2}px`,
     overflowY: 'auto',
     scrollbarWidth: 'none',
     msOverflowStyle: 'none',
@@ -1495,7 +1539,16 @@ const s = {
     height: ROW_HEIGHT,
   },
   lbRank:    { color: '#666', width: 28, flexShrink: 0 },
-  lbName:    { flex: 1, fontWeight: 'bold' },
+  lbName:    { fontWeight: 'bold', lineHeight: 1.2 },
+  lbNameGroup: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    gap: 1,
+    minWidth: 0,
+  },
   lbBotBadge: {
     background: '#173f2a',
     color: '#69d394',

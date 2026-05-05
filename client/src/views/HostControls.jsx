@@ -219,6 +219,7 @@ function HostControls({ gameState, socket }) {
   const [botCascadeMode, setBotCascadeMode] = useState('AUTO');
   const [botVoteMode, setBotVoteMode] = useState('AUTO');
   const [instantWheelSpin, setInstantWheelSpin] = useState(false);
+  const [skipWheelAnimation, setSkipWheelAnimation] = useState(false);
   const [playerPanelOpen, setPlayerPanelOpen] = useState(true);
   const [debugPanelOpen, setDebugPanelOpen] = useState(false);
   const [debugSystemOpen, setDebugSystemOpen] = useState(false);
@@ -271,6 +272,7 @@ function HostControls({ gameState, socket }) {
   const buildBotSettingsPayload = (overrides = {}) => ({
     autoPick: overrides.autoPick ?? botAutoPick,
     instantWheelSpin: overrides.instantWheelSpin ?? instantWheelSpin,
+    skipWheelAnimation: overrides.skipWheelAnimation ?? skipWheelAnimation,
     decisionDelayMinMs: overrides.decisionDelayMinMs ?? Math.max(0, Math.round(Number(botDelayMinSec || 0) * 1000)),
     decisionDelayMaxMs: overrides.decisionDelayMaxMs ?? Math.max(0, Math.round(Number(botDelayMaxSec || 0) * 1000)),
     preBetMode: overrides.preBetMode ?? botPreBetMode,
@@ -380,6 +382,7 @@ function HostControls({ gameState, socket }) {
     setBotCascadeMode(cfg.cascadeMode ?? 'AUTO');
     setBotVoteMode(cfg.voteMode ?? 'AUTO');
     setInstantWheelSpin(Boolean(cfg.instantWheelSpin));
+    setSkipWheelAnimation(Boolean(cfg.skipWheelAnimation));
   }, [gameState.debugTools, isBotSettingsDirty]);
 
   useEffect(() => {
@@ -390,6 +393,7 @@ function HostControls({ gameState, socket }) {
     const actual = {
       autoPick: Boolean(cfg.autoPick),
       instantWheelSpin: Boolean(cfg.instantWheelSpin),
+      skipWheelAnimation: Boolean(cfg.skipWheelAnimation),
       decisionDelayMinMs: Number(cfg.decisionDelayMinMs ?? cfg.timeoutDelayMinMs ?? 500),
       decisionDelayMaxMs: Number(cfg.decisionDelayMaxMs ?? cfg.timeoutDelayMaxMs ?? 1500),
       preBetMode: cfg.preBetMode ?? 'AUTO',
@@ -403,6 +407,7 @@ function HostControls({ gameState, socket }) {
     if (
       expected.autoPick === actual.autoPick &&
       expected.instantWheelSpin === actual.instantWheelSpin &&
+      expected.skipWheelAnimation === actual.skipWheelAnimation &&
       expected.decisionDelayMinMs === actual.decisionDelayMinMs &&
       expected.decisionDelayMaxMs === actual.decisionDelayMaxMs &&
       expected.preBetMode === actual.preBetMode &&
@@ -427,6 +432,7 @@ function HostControls({ gameState, socket }) {
     botCascadeMode,
     botVoteMode,
     instantWheelSpin,
+    skipWheelAnimation,
   ]);
 
   return (
@@ -851,6 +857,19 @@ function HostControls({ gameState, socket }) {
                       }}
                     />
                     Instant Wheel Spin
+                  </label>
+                  <label style={styles.botMasterSwitchLabel}>
+                    <input
+                      type="checkbox"
+                      checked={skipWheelAnimation}
+                      onChange={(e) => {
+                        const enabled = e.target.checked;
+                        setSkipWheelAnimation(enabled);
+                        setIsBotSettingsDirty(true);
+                        applyBotSettings({ skipWheelAnimation: enabled });
+                      }}
+                    />
+                    Skip Wheel (Auto-Assign All)
                   </label>
                 </div>
               </>

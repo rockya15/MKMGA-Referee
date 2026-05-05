@@ -31,7 +31,6 @@ export function usePanelLayout({ currentStage, activeElementType }) {
     const hasActive = !!activeElementType;
     const featureCfg = FEATURE_CONFIGS[activeElementType] ?? { flexWeight: 1.0, minWidth: 420 };
 
-    // Leaderboard is always visible; it just changes width
     const leaderboard = {
       visible: true,
       enterFrom: 'right',
@@ -40,7 +39,6 @@ export function usePanelLayout({ currentStage, activeElementType }) {
       minWidth: 460,
       duration: DEFAULT_DURATION,
       ease: DEFAULT_EASE,
-      // fullWidth when nothing is competing for space
       fullWidth: !hasActive,
     };
 
@@ -54,15 +52,6 @@ export function usePanelLayout({ currentStage, activeElementType }) {
       ease: DEFAULT_EASE,
     };
 
-    // Footer: currently always hidden — wired up when content is added
-    const footer = {
-      visible: false,
-      enterFrom: 'bottom',
-      exitTo: 'bottom',
-      duration: DEFAULT_DURATION,
-      ease: DEFAULT_EASE,
-    };
-
-    return { activeElement, leaderboard, footer };
+    return { activeElement, leaderboard };
   }, [currentStage, activeElementType]);
 }
