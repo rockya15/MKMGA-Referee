@@ -845,37 +845,44 @@ function HostControls({ gameState, socket }) {
                     />
                     Bot Logic Enabled
                   </label>
-                  <label style={styles.botMasterSwitchLabel}>
-                    <input
-                      type="checkbox"
-                      checked={instantWheelSpin}
-                      onChange={(e) => {
-                        const enabled = e.target.checked;
-                        setInstantWheelSpin(enabled);
-                        setIsBotSettingsDirty(true);
-                        applyBotSettings({ instantWheelSpin: enabled });
-                      }}
-                    />
-                    Instant Wheel Spin
-                  </label>
-                  <label style={styles.botMasterSwitchLabel}>
-                    <input
-                      type="checkbox"
-                      checked={skipWheelAnimation}
-                      onChange={(e) => {
-                        const enabled = e.target.checked;
-                        setSkipWheelAnimation(enabled);
-                        setIsBotSettingsDirty(true);
-                        applyBotSettings({ skipWheelAnimation: enabled });
-                      }}
-                    />
-                    Skip Wheel (Auto-Assign All)
-                  </label>
                 </div>
               </>
             )}
           </div>
         )}
+      </div>
+
+      {/* ── WHEEL DEBUG ── */}
+      <div style={styles.section}>
+        <div style={styles.sectionTitle}>Wheel Debug</div>
+        <div style={{ display: 'flex', flexDirection: 'row', gap: 16, flexWrap: 'wrap', marginTop: 6 }}>
+          <label style={styles.botMasterSwitchLabel}>
+            <input
+              type="checkbox"
+              checked={instantWheelSpin}
+              onChange={(e) => {
+                const enabled = e.target.checked;
+                setInstantWheelSpin(enabled);
+                setIsBotSettingsDirty(true);
+                applyBotSettings({ instantWheelSpin: enabled });
+              }}
+            />
+            Instant Wheel Spin
+          </label>
+          <label style={styles.botMasterSwitchLabel}>
+            <input
+              type="checkbox"
+              checked={skipWheelAnimation}
+              onChange={(e) => {
+                const enabled = e.target.checked;
+                setSkipWheelAnimation(enabled);
+                setIsBotSettingsDirty(true);
+                applyBotSettings({ skipWheelAnimation: enabled });
+              }}
+            />
+            Skip Wheel (Auto-Assign All)
+          </label>
+        </div>
       </div>
 
       <div style={styles.section}>

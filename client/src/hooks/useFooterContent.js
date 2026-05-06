@@ -14,7 +14,7 @@ const FLAVOR_MESSAGES = [
   'Statistics say someone is about to lose big.',
   'God bless Israel',
   'LET IT RIDE',
-  'Gold Gold Gold',
+  'GOLD GOLD GOLD',
 ];
 
 function shuffleArray(arr) {
@@ -70,12 +70,15 @@ function buildGeneralItems(players, raceNumber, cascadeSpinsThisRound) {
       duration: DISPLAY_DURATION_MS,
       data: { label: 'LEADING THE PACK', player: byBal[0], value: byBal[0].balance, icon: '👑' },
     });
-    items.push({
-      id: 'stat-last',
-      type: 'stat',
-      duration: DISPLAY_DURATION_MS,
-      data: { label: 'ON THE ROPES', player: byBal[byBal.length - 1], value: byBal[byBal.length - 1].balance, icon: '💸' },
-    });
+    const lowestPlayer = byBal[byBal.length - 1];
+    if (lowestPlayer.balance === 0) {
+      items.push({
+        id: 'stat-last',
+        type: 'stat',
+        duration: DISPLAY_DURATION_MS,
+        data: { label: 'DUE FOR A WIN', player: lowestPlayer, value: lowestPlayer.balance, icon: '💸' },
+      });
+    }
 
     const total = active.reduce((s, p) => s + p.balance, 0);
     items.push({

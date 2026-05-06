@@ -26,6 +26,8 @@ class BettingEngine {
     this.gameState.bettingState.betCap = betCap;
     this.gameState.bettingState.initialBetCap = betCap;
     this.gameState.bettingState.raiseLockedPlayers = {};
+    this.gameState.bettingState.lastBetActions = {};
+    this.gameState.bettingState.lastRaiserId = null;
 
     this.gameState.setStage(STAGES.BETTING);
   }
@@ -88,6 +90,7 @@ class BettingEngine {
       if (!alreadyQueued.has(candidateId)) {
         requeue.push(candidateId);
         this.gameState.bettingState.raiseLockedPlayers[candidateId] = true;
+        delete this.gameState.bettingState.lastBetActions[candidateId];
       }
     }
 
@@ -116,6 +119,7 @@ class BettingEngine {
       if (toCall !== 0) {
         return { error: 'Cannot check when there is an active bet.' };
       }
+      state.lastBetActions[playerId] = 'check';
       this.removeFromQueue(playerId);
       return this.finalizeIfComplete();
     }
@@ -127,6 +131,7 @@ class BettingEngine {
       player.skipFoldTokenAvailable = false;
       player.folded = true;
       state.playersInRound = state.playersInRound.filter((id) => id !== playerId);
+      state.lastBetActions[playerId] = 'fold';
       this.removeFromQueue(playerId);
       this.recalculateBetCapAfterFold();
       return this.finalizeIfComplete();
@@ -144,6 +149,7 @@ class BettingEngine {
         this.contribute(player, player.balance);
       }
 
+      state.lastBetActions[playerId] = 'call';
       this.removeFromQueue(playerId);
       return this.finalizeIfComplete();
     }
@@ -173,6 +179,8 @@ class BettingEngine {
 
       this.contribute(player, needed);
       state.currentBet = raiseTo;
+      state.lastBetActions[playerId] = `raise:${raiseTo}`;
+      state.lastRaiserId = playerId;
       this.removeFromQueue(playerId);
       this.requeueAfterRaise(playerId);
       return this.finalizeIfComplete();

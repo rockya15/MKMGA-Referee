@@ -118,7 +118,9 @@ class GameState {
       actionQueue: [],
       betCap: 0,
       raiseLockedPlayers: {},
-      initialBetCap: 0
+      initialBetCap: 0,
+      lastBetActions: {},
+      lastRaiserId: null,
     };
   }
 

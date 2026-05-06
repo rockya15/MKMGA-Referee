@@ -203,7 +203,7 @@ function computeDisplayLayout(order, rowMetaById, sectionLabels = {}) {
     }
   }
 
-  return { rows, dividers, totalHeight: y };
+  return { rows, dividers, totalHeight: y + DIVIDER_HEIGHT / 2 };
 }
 
 function stepDisplayedOrder(currentOrder, desiredIndexMap, movingIds) {
@@ -477,6 +477,9 @@ export default function LeaderboardPanel({
   const [lbHeaderHeight,    setLbHeaderHeight]    = useState(58);
   const [lbScrollTop,       setLbScrollTop]        = useState(0);
   const [playerTransitions, setPlayerTransitions]  = useState({});
+  const [bettingFlashes,    setBettingFlashes]     = useState({});
+  const bettingFlashTimersRef = useRef({});
+  const prevBetActionsRef     = useRef({});
   const [displayOrder,      setDisplayOrder]       = useState([]);
   const [containerWidth,    setContainerWidth]     = useState(LEADERBOARD_PANEL_WIDTH - 36);
   const stickyPlayerIdRef = useRef(null);
@@ -606,6 +609,56 @@ export default function LeaderboardPanel({
     }, TRANSITION_POP_MS);
     transitionPopTimersRef.current.set(id, timer);
   }, [clearTransitionPopTimer]);
+
+  // ── Betting action flash helper ─────────────────────────────────────────
+  const startBettingFlash = useCallback((playerId, label, borderColor) => {
+    const prevIds = bettingFlashTimersRef.current[playerId];
+    if (prevIds) prevIds.forEach(clearTimeout);
+    const ids = [];
+    bettingFlashTimersRef.current[playerId] = ids;
+
+    setBettingFlashes(p => ({ ...p, [playerId]: { label, borderColor, phase: 'pop-in' } }));
+
+    ids.push(setTimeout(() => {
+      setBettingFlashes(p => p[playerId] ? { ...p, [playerId]: { ...p[playerId], phase: 'announcing' } } : p);
+      ids.push(setTimeout(() => {
+        setBettingFlashes(p => p[playerId] ? { ...p, [playerId]: { ...p[playerId], phase: 'fading' } } : p);
+        ids.push(setTimeout(() => {
+          setBettingFlashes(p => { const n = { ...p }; delete n[playerId]; return n; });
+          delete bettingFlashTimersRef.current[playerId];
+        }, 420));
+      }, 1200));
+    }, 380));
+  }, []);
+
+  // Stable serialized key so the effect fires even when the object is mutated in-place
+  const _bettingActionsKey = JSON.stringify(gameState.bettingState?.lastBetActions ?? {});
+
+  // ── Detect new betting actions and trigger flashes ──────────────────────
+  useEffect(() => {
+    if (currentStage !== 'BETTING') {
+      prevBetActionsRef.current = {};
+      setBettingFlashes({});
+      return;
+    }
+    const currActions = gameState.bettingState?.lastBetActions ?? {};
+    const prevActions = prevBetActionsRef.current;
+    const currentBet  = gameState.bettingState?.currentBet ?? 0;
+
+    Object.entries(currActions).forEach(([playerId, action]) => {
+      if (prevActions[playerId] === action) return;
+      if (action === 'check') {
+        startBettingFlash(playerId, 'CHECKED', '#cccccc');
+      } else if (action === 'call') {
+        startBettingFlash(playerId, `CALLED $${Number(currentBet).toFixed(2)}`, '#2ecc71');
+      } else if (action?.startsWith('raise:')) {
+        const amt = parseFloat(action.slice(6));
+        startBettingFlash(playerId, `RAISED TO $${Number.isFinite(amt) ? amt.toFixed(2) : '?'}`, '#e74c3c');
+      }
+    });
+    prevBetActionsRef.current = { ...currActions };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [_bettingActionsKey, currentStage]);
 
   const maybeFadeTagsInCorrectZone = useCallback((order) => {
     const now = performance.now();
@@ -1160,6 +1213,8 @@ export default function LeaderboardPanel({
     playerTransitions,
     stickyPlayerId: activeStickyPlayerId,
     cardWidth: containerWidth,
+    bettingState: gameState.bettingState ?? null,
+    bettingFlashes,
   };
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1171,7 +1226,7 @@ export default function LeaderboardPanel({
       canvas.setCardPosition?.(row.id, y, 0);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayLayout, playerTransitions, activeTimer, wheelFocusPlayerId, currentStage, getFavoriteColor, activeStickyPlayerId, containerWidth]);
+  }, [displayLayout, playerTransitions, activeTimer, wheelFocusPlayerId, currentStage, getFavoriteColor, activeStickyPlayerId, containerWidth, gameState.bettingState, bettingFlashes]);
 
   // ── Auto scroll ────────────────────────────────────────────────────────────
   // While the payout lock is active, keep the leaderboard pinned at the top.
@@ -1222,15 +1277,43 @@ export default function LeaderboardPanel({
     const transition  = playerTransitions[player.id];
     const showTransition = Boolean(transition);
 
+    // ── Betting state indicators ─────────────────────────────────────────────
+    const isBettingStage = currentStage === 'BETTING';
+    const bs = gameState.bettingState ?? {};
+    const inBettingRound  = isBettingStage && (bs.playersInRound ?? []).includes(player.id);
+    const inQueue         = isBettingStage && (bs.actionQueue ?? []).includes(player.id);
+    const isRaiseLocked   = isBettingStage && Boolean(bs.raiseLockedPlayers?.[player.id]);
+    const lastBetAction   = isBettingStage ? (bs.lastBetActions?.[player.id] ?? null) : null;
+    const isLastRaiser    = isBettingStage && bs.lastRaiserId === player.id;
+    // Derive badge — only ALL IN shown; others replaced by overlays
+    let betBadge = null; // { label, style }
+    if (isBettingStage && !isOnClock) {
+      if (player.allIn && inBettingRound) {
+        betBadge = { label: 'ALL IN', style: s.lbBetAllIn };
+      }
+    }
+    const mustCallHighlight = isBettingStage && inQueue && isRaiseLocked && !isOnClock;
+    const isRaiserHighlight = isBettingStage && isLastRaiser && !inQueue && !isOnClock;
+
     const isPodium = podiumTier !== null;
     const podiumText = '#0e0c08';
 
     const normalBg = isOnClock
       ? (timerUrgent ? '#2a0000' : '#001a0a')
+      : mustCallHighlight ? '#2a1500'
+      : isRaiserHighlight ? '#2a0000'
       : isWheelFocus ? '#2a2410'
       : rowElim ? '#1a0000'
       : rowDimmed ? '#161616'
       : rowIndex % 2 === 0 ? '#151515' : '#1c1c1c';
+
+    const normalBorder = isOnClock
+      ? `1px solid ${timerUrgent ? '#e74c3c' : '#2ecc71'}`
+      : mustCallHighlight ? '1px solid #c05000'
+      : isRaiserHighlight ? '1px solid #e74c3c'
+      : isWheelFocus ? '1px solid #f0c040'
+      : rowDimmed ? '1px solid #2b2b2b'
+      : '1px solid transparent';
 
     const podiumBg =
       podiumTier === 'gold'
@@ -1258,11 +1341,7 @@ export default function LeaderboardPanel({
           opacity:    rowElim ? 0.4 : rowDimmed ? 0.7 : 1,
           filter:     rowDimmed ? 'grayscale(0.45)' : 'none',
           background: isPodium ? podiumBg : normalBg,
-          border:     isPodium ? podiumBorder
-            : isOnClock ? `1px solid ${timerUrgent ? '#e74c3c' : '#2ecc71'}`
-            : isWheelFocus ? '1px solid #f0c040'
-            : rowDimmed ? '1px solid #2b2b2b'
-            : '1px solid transparent',
+          border:     isPodium ? podiumBorder : normalBorder,
           boxShadow:  isPodium ? podiumShadow : 'none',
           color:      isPodium ? podiumText : undefined,
         }}
@@ -1292,6 +1371,7 @@ export default function LeaderboardPanel({
             {activeTimer.timeLeft}s
           </span>
         )}
+        {betBadge && <span style={betBadge.style}>{betBadge.label}</span>}
         {(tokenLabel || noReviveLabel) && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'flex-start' }}>
             {tokenLabel && (
@@ -1431,6 +1511,27 @@ export default function LeaderboardPanel({
           const transition  = playerTransitions[player.id];
           const showTransition = Boolean(transition);
 
+          // ── Betting overlays ──────────────────────────────────────────────
+          const _bs          = currentStage === 'BETTING' ? (gameState.bettingState ?? {}) : {};
+          const _isOnClock   = activeTimer?.playerId === player.id;
+          const _inQueue     = Boolean((_bs.actionQueue ?? []).includes(player.id));
+          const _isLocked    = Boolean(_bs.raiseLockedPlayers?.[player.id]);
+          const _isLastRaiser = currentStage === 'BETTING' && _bs.lastRaiserId === player.id;
+          const bettingFlash = bettingFlashes[player.id] ?? null;
+          const betFlashClass = bettingFlash?.phase === 'pop-in'
+            ? 'lb-transition-label-pop-in'
+            : bettingFlash?.phase === 'fading'
+            ? 'lb-transition-label-fade'
+            : 'lb-transition-label-announcing';
+          // Persistent raiser overlay: shows after flash fades, until raiser role ends
+          const showRaiserPersistent = !isSticky && currentStage === 'BETTING' &&
+            _isLastRaiser && !_inQueue && !_isOnClock && !bettingFlash;
+          // Raiser label text (persists until role cleared)
+          const _raiserAct = _bs.lastBetActions?.[player.id];
+          const raiserPersistentLabel = _raiserAct?.startsWith('raise:')
+            ? `RAISED TO $${Number.isFinite(parseFloat(_raiserAct.slice(6))) ? parseFloat(_raiserAct.slice(6)).toFixed(2) : '?'}`
+            : 'RAISED';
+
           return (
             <div
               key={id}
@@ -1486,6 +1587,28 @@ export default function LeaderboardPanel({
                   <div style={s.lbTransitionLabel}>{transition.label}</div>
                 </div>
               )}
+
+              {/* Betting flash overlay (CHECKED / CALLED / RAISED TO — brief pop-in) */}
+              {!isSticky && !showTransition && bettingFlash && (
+                <div style={s.lbTransitionOverlay} className={betFlashClass}>
+                  <div style={{
+                    ...s.lbTransitionLabel,
+                    color: bettingFlash.borderColor,
+                    textShadow: `0 0 18px ${bettingFlash.borderColor}`,
+                  }}>
+                    {bettingFlash.label}
+                  </div>
+                </div>
+              )}
+
+              {/* Persistent RAISED TO label (stays until raiser role ends) */}
+              {!isSticky && !showTransition && showRaiserPersistent && (
+                <div style={s.lbRaiserPersistentOverlay}>
+                  <div style={s.lbRaiserPersistentLabel}>{raiserPersistentLabel}</div>
+                </div>
+              )}
+
+
             </div>
           );
         })}
@@ -1592,6 +1715,68 @@ const s = {
     position: 'relative',
     zIndex: 10,
   },
+  lbBetMustCall: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    background: '#3a1a00',
+    color: '#ff8c00',
+    border: '1px solid #c05000',
+    padding: '2px 6px',
+    borderRadius: 4,
+    marginRight: 4,
+    letterSpacing: 0.5,
+    position: 'relative',
+    zIndex: 10,
+  },
+  lbBetChecked: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    background: '#0a2a12',
+    color: '#4dd870',
+    border: '1px solid #2a7a40',
+    padding: '2px 6px',
+    borderRadius: 4,
+    marginRight: 4,
+    position: 'relative',
+    zIndex: 10,
+  },
+  lbBetCalled: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    background: '#0a1a2a',
+    color: '#5ab4f0',
+    border: '1px solid #2a5a8a',
+    padding: '2px 6px',
+    borderRadius: 4,
+    marginRight: 4,
+    position: 'relative',
+    zIndex: 10,
+  },
+  lbBetRaised: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    background: '#2a2000',
+    color: '#f0d040',
+    border: '1px solid #9a8000',
+    padding: '2px 6px',
+    borderRadius: 4,
+    marginRight: 4,
+    letterSpacing: 0.5,
+    position: 'relative',
+    zIndex: 10,
+  },
+  lbBetAllIn: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    background: '#2a0f00',
+    color: '#ff6b35',
+    border: '1px solid #8a3000',
+    padding: '2px 6px',
+    borderRadius: 4,
+    marginRight: 4,
+    position: 'relative',
+    zIndex: 10,
+  },
   lbFocusBadge: {
     fontSize: 10,
     fontWeight: 'bold',
@@ -1642,6 +1827,23 @@ const s = {
     textTransform: 'uppercase',
     letterSpacing: 2.2,
     textShadow: '0 0 18px rgba(255,107,107,0.8)',
+  },
+  lbRaiserPersistentOverlay: {
+    position: 'absolute',
+    inset: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(50,0,0,0.70)',
+    borderRadius: 6,
+  },
+  lbRaiserPersistentLabel: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#ff4444',
+    textTransform: 'uppercase',
+    letterSpacing: 2.2,
+    textShadow: '0 0 16px rgba(255,68,68,0.85)',
   },
   lbStickySectionClip: {
     position: 'relative',

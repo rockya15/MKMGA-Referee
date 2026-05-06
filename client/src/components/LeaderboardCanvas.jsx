@@ -173,7 +173,17 @@ class CardObject {
              : podiumTier === 'silver' ? 0x8c94a0
              :                          0x945a28;
     } else {
+      const mustCallHighlight = currentStage === 'BETTING' &&
+        Boolean(opts.bettingState?.raiseLockedPlayers?.[player.id]) &&
+        (opts.bettingState?.actionQueue ?? []).includes(player.id) &&
+        !isOnClock;
+      const isRaiserHighlight = currentStage === 'BETTING' &&
+        opts.bettingState?.lastRaiserId === player.id &&
+        !(opts.bettingState?.actionQueue ?? []).includes(player.id) &&
+        !isOnClock;
       bgFill = isOnClock     ? (timerUrgent ? 0x2a0000 : 0x001a0a)
+             : mustCallHighlight ? 0x2a1500
+             : isRaiserHighlight ? 0x2a0000
              : isWheelFocus  ? 0x2a2410
              : rowElim       ? 0x1a0000
              : rowDimmed     ? 0x161616
@@ -187,10 +197,21 @@ class CardObject {
                   :                          0xc47c30;
     } else if (isOnClock) {
       borderColor = timerUrgent ? 0xe74c3c : 0x2ecc71;
+    } else if (currentStage === 'BETTING' && Boolean(opts.bettingState?.raiseLockedPlayers?.[player.id]) && (opts.bettingState?.actionQueue ?? []).includes(player.id) && !isOnClock) {
+      borderColor = 0xc05000;
+    } else if (currentStage === 'BETTING' && opts.bettingState?.lastRaiserId === player.id && !(opts.bettingState?.actionQueue ?? []).includes(player.id) && !isOnClock) {
+      borderColor = 0xe74c3c;
     } else if (isWheelFocus) {
       borderColor = 0xf0c040;
     } else if (rowDimmed) {
       borderColor = 0x2b2b2b;
+    }
+
+    // Betting flash overrides border color (white for CHECK, green for CALL, red for RAISE)
+    const flashEntry = opts.bettingFlashes?.[player.id];
+    if (flashEntry && (flashEntry.phase === 'pop-in' || flashEntry.phase === 'announcing')) {
+      const hexColor = parseInt(flashEntry.borderColor.replace('#', ''), 16);
+      if (!isNaN(hexColor)) borderColor = hexColor;
     }
 
     if (borderColor !== null) this.bg.lineStyle(1, borderColor, 1);
@@ -306,6 +327,16 @@ class CardObject {
     const noReviveLabel = (player.noRevive || player.eliminationState === 'failed_resurrection')
       ? 'NO REVIVE' : null;
 
+    // ── Betting status badge \u2014 only ALL IN shown; others use HTML overlays ───────
+    const bs = currentStage === 'BETTING' ? (opts.bettingState ?? null) : null;
+    let betBadge = null;
+    if (bs && !isOnClock) {
+      const inRound  = (bs.playersInRound ?? []).includes(player.id);
+      if (player.allIn && inRound) {
+        betBadge = { text: 'ALL IN', bg: 0x2a0f00, color: '#ff6b35', border: 0x8a3000 };
+      }
+    }
+
     this.badgeCont.removeChildren();
 
     const badges = [];
@@ -318,6 +349,7 @@ class CardObject {
     if (isWheelFocus && !isOnClock) badges.push({
       text: 'FOCUS', bg: null, color: '#f0c040', border: 0xf0c040,
     });
+    if (betBadge) badges.push(betBadge);
 
     if (!badges.length && !tokenLabel && !noReviveLabel) return;
 
