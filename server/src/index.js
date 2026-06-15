@@ -1638,6 +1638,14 @@ io.on('connection', (socket) => {
     emitGameState();
   });
 
+  // Handle public URL setting from host controls
+  socket.on('set-public-url', (data) => {
+    const url = String(data?.url || '').trim();
+    if (!url) return;
+    gameState.setPublicJoinUrl(url);
+    emitGameState();
+  });
+
   // Handle host actions
   socket.on('host-action', (data, ack) => {
     const rawAction = String(data?.action || '');

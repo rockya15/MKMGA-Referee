@@ -47,6 +47,7 @@ class GameState {
     this.bettingState = this.createEmptyBettingState();
     this.raceResult = null;
     this.preservePositionsNextRace = false;
+    this.publicJoinUrl = process.env.PUBLIC_JOIN_URL || '';
   }
 
   getAllSnapshotFields() {
@@ -62,7 +63,8 @@ class GameState {
       positionDraft: this.positionDraft,
       bettingState: this.bettingState,
       raceResult: this.raceResult,
-      preservePositionsNextRace: this.preservePositionsNextRace
+      preservePositionsNextRace: this.preservePositionsNextRace,
+      publicJoinUrl: this.publicJoinUrl
     };
   }
 
@@ -106,6 +108,7 @@ class GameState {
     this.bettingState = merged.bettingState || this.createEmptyBettingState();
     this.raceResult = merged.raceResult || null;
     this.preservePositionsNextRace = Boolean(merged.preservePositionsNextRace);
+    this.publicJoinUrl = String(merged.publicJoinUrl || '');
     this.updateEliminationStates();
 
     return { success: true };
@@ -243,6 +246,9 @@ class GameState {
 
   addOrRejoinPlayer(socketId, playerData) {
     if (!this.hostSettings.lobbyOpen || this.currentStage !== STAGES.LOBBY) {
+      return { error: 'meow.'}
+    }
+    const displayName = String(playerData.displayName || '').trim();
     const realName = String(playerData.realName || '').trim();
     const cashAmount = Number(playerData.cashAmount);
     const password = String(playerData.password || '').trim();
@@ -1071,6 +1077,10 @@ class GameState {
     this.raceResult = null;
     this.preservePositionsNextRace = false;
     return { success: true };
+  }
+
+  setPublicJoinUrl(url) {
+    this.publicJoinUrl = String(url || '');
   }
 }
 

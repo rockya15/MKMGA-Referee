@@ -208,6 +208,7 @@ function PlayerCard({ p, gameState, socket, onError, onSuccess, resurrectionBase
 function HostControls({ gameState, socket }) {
   const [resultPlacement, setResultPlacement] = useState('1');
   const [maxCashCap, setMaxCashCap] = useState('15');
+  const [publicUrlInput, setPublicUrlInput] = useState('');
   const [botAddCount, setBotAddCount] = useState('4');
   const [botAutoPick, setBotAutoPick] = useState(true);
   const [botDelayMinSec, setBotDelayMinSec] = useState('0.5');
@@ -445,6 +446,41 @@ function HostControls({ gameState, socket }) {
 
       {errorMsg && <div style={styles.errorBanner}>{errorMsg}</div>}
       {successMsg && <div style={styles.successBanner}>{successMsg}</div>}
+
+      {/* ── PUBLIC URL INPUT ── */}
+      <div style={styles.section}>
+        <div style={styles.sectionTitle}>Cloudflare Tunnel URL</div>
+        <div style={styles.row}>
+          <input
+            style={{ ...styles.input, flex: 1 }}
+            type="text"
+            placeholder="Paste Cloudflare Tunnel URL here..."
+            value={publicUrlInput}
+            onChange={(e) => setPublicUrlInput(e.target.value)}
+          />
+          <button
+            style={styles.btn}
+            onClick={() => {
+              if (!publicUrlInput.trim()) {
+                setErrorMsg('Please enter a URL');
+                setTimeout(() => setErrorMsg(null), 3000);
+                return;
+              }
+              socket.emit('set-public-url', { url: publicUrlInput.trim() });
+              setSuccessMsg('URL updated!');
+              setTimeout(() => setSuccessMsg(null), 3000);
+              setPublicUrlInput('');
+            }}
+          >
+            Set URL
+          </button>
+        </div>
+        {gameState.publicJoinUrl && (
+          <div style={{ ...styles.hint, marginTop: 8, color: '#2ecc71' }}>
+            Current: {gameState.publicJoinUrl}
+          </div>
+        )}
+      </div>
 
       {/* ── LOBBY ── */}
       {currentStage === 'LOBBY' && !gameState.hostSettings.lobbyOpen && (
@@ -1093,7 +1129,7 @@ const styles = {
     wordBreak: 'break-word',
   },
   hint: { fontSize: 13, color: '#aaa' },
-  row: { display: 'flex', alignItems: 'center', gap: 10 },
+  row: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
   rowWrap: { display: 'flex', flexWrap: 'wrap', gap: 10 },
   botControlsDimmed: {
     opacity: 0.45,

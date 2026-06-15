@@ -23,7 +23,7 @@ function getFavoriteColorStatic(player) {
 }
 
 function HostView({ gameState, socket }) {
-  const { currentStage, players: rawPlayers, wheelOrder, positionDraft, pot, raceNumber, entryFee, raceResult, cascadeSpinsThisRound = 0 } = gameState;
+  const { currentStage, players: rawPlayers, wheelOrder, positionDraft, pot, raceNumber, entryFee, raceResult, cascadeSpinsThisRound = 0, publicJoinUrl } = gameState;
   // Memoize so footer and other child components don't re-render from unrelated HostView state changes
   const players = useMemo(() => Array.isArray(rawPlayers) ? rawPlayers : [], [rawPlayers]);
 
@@ -379,6 +379,7 @@ function HostView({ gameState, socket }) {
         <span style={styles.headerStage}>{currentStage.replace(/_/g, ' ')}</span>
         <span style={styles.headerPot}>POT: <MoneyDelta value={pot}><MoneyTicker value={pot} prefix="$" /></MoneyDelta></span>
         <span style={styles.headerFee}>ENTRY: {entryFeeDisplay}</span>
+        <span style={styles.headerJoinUrl}>{gameState.publicJoinUrl || 'NO URL FOUND'}</span>
       </div>
 
       <div style={styles.stageLayout}>
@@ -497,6 +498,15 @@ const styles = {
   headerStage: { fontSize: 14, color: '#aaa', textTransform: 'uppercase', letterSpacing: 2 },
   headerPot: { fontSize: 18, fontWeight: 'bold', color: '#2ecc71' },
   headerFee: { fontSize: 16, color: '#e67e22' },
+  headerJoinUrl: {
+    fontSize: 12,
+    color: '#2ecc71',
+    fontFamily: 'monospace',
+    marginLeft: 'auto',
+    background: 'rgba(0, 0, 0, 0.3)',
+    padding: '4px 8px',
+    borderRadius: 4,
+  },
   stageLayout: {
     display: 'flex',
     flexDirection: 'column',
