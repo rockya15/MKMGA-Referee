@@ -14,7 +14,6 @@ export const TYPE_ACCENT = {
   'fun-statement':  '#f0c040',
   'player-drawing': '#9b59b6',
   'stat':           '#2ecc71',
-  'flavor':         '#3498db',
   'event':          '#e74c3c',
   'balance-graph':  '#e67e22',
   'elimination':    '#e74c3c',
@@ -42,17 +41,21 @@ function FunStatementItem({ player, text }) {
   );
 }
 
-function DrawingItem({ player }) {
+function DrawingItem({ player, height }) {
   const accent = TYPE_ACCENT['player-drawing'];
+  const imgHeight = (height || 220) - 16;
   return (
-    <div style={s.row}>
-      <img src={player.drawingImageUrl} alt="Drawing" style={s.drawingThumb} />
+    <div style={s.drawingRow}>
+      <img
+        src={player.drawingImageUrl}
+        alt="Drawing"
+        style={{ ...s.drawingFull(accent), height: imgHeight }}
+      />
       <div style={s.drawingMeta}>
         <div style={s.drawingPromptLabel}>PROMPT</div>
         <div style={s.drawingPromptText}>{player.drawingPrompt || '(no prompt)'}</div>
+        <div style={{ ...s.name(accent), marginTop: 6 }}>{player?.displayName}</div>
       </div>
-      <div style={s.divider} />
-      <div style={s.name(accent)}>{player?.displayName}</div>
     </div>
   );
 }
@@ -129,14 +132,6 @@ function BalanceGraphItem({ label, players }) {
   );
 }
 
-function FlavorItem({ text }) {
-  return (
-    <div style={{ ...s.row, justifyContent: 'center' }}>
-      <div style={{ ...s.text, fontStyle: 'italic', textAlign: 'center', flex: 1 }}>{text}</div>
-    </div>
-  );
-}
-
 function EventItem({ content }) {
   return (
     <div style={s.row}>
@@ -145,13 +140,12 @@ function EventItem({ content }) {
   );
 }
 
-function ItemRenderer({ item }) {
+function ItemRenderer({ item, height }) {
   if (!item) return null;
   switch (item.type) {
     case 'fun-statement':  return <FunStatementItem {...item.data} />;
-    case 'player-drawing': return <DrawingItem {...item.data} />;
+    case 'player-drawing': return <DrawingItem {...item.data} height={height} />;
     case 'stat':           return <StatItem {...item.data} />;
-    case 'flavor':         return <FlavorItem {...item.data} />;
     case 'event':          return <EventItem {...item.data} />;
     case 'balance-graph':  return <BalanceGraphItem {...item.data} />;
     case 'elimination':    return <EliminationItem {...item.data} />;
@@ -179,7 +173,7 @@ export default function FooterPanel({ displayItem, itemVisible, height = 72 }) {
           transition: `opacity ${TRANSITION_MS}ms ease, transform ${TRANSITION_MS}ms ease`,
         }}
       >
-        <ItemRenderer item={displayItem} />
+        <ItemRenderer item={displayItem} height={height} />
       </div>
     </div>
   );
@@ -261,19 +255,29 @@ const s = {
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
   },
-  drawingThumb: {
-    height: 52,
-    width: 52,
-    objectFit: 'cover',
-    borderRadius: 5,
-    border: '1px solid #333',
-    flexShrink: 0,
+  drawingRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 20,
+    height: '100%',
+    width: '100%',
+    padding: '8px 0',
+    boxSizing: 'border-box',
   },
+  drawingFull: (accent) => ({
+    width: 'auto',
+    maxWidth: '45%',
+    objectFit: 'contain',
+    borderRadius: 8,
+    border: `2px solid ${accent}55`,
+    flexShrink: 0,
+  }),
   drawingMeta: {
     display: 'flex',
     flexDirection: 'column',
-    gap: 3,
-    flex: 1,
+    gap: 4,
+    maxWidth: 320,
     overflow: 'hidden',
     minWidth: 0,
   },

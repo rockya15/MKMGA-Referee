@@ -29,7 +29,6 @@ function getBadgeLabel(item) {
     case 'fun-statement':  return 'FUN FACT';
     case 'player-drawing': return 'DRAWING';
     case 'stat':           return (item.data?.icon ? item.data.icon + ' ' : '') + (item.data?.label || 'STAT');
-    case 'flavor':         return 'MKMGA';
     case 'balance-graph':  return item.data?.label || 'BALANCE HISTORY';
     case 'elimination':    return '💀 ELIMINATED';
     case 'event':          return null;

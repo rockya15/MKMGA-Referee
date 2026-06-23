@@ -10,13 +10,6 @@ const GRAPH_HEIGHT       = 144;
 const ELIMINATION_HEIGHT = 144;
 const DEFAULT_HEIGHT     = 72;
 
-const FLAVOR_MESSAGES = [
-  'Statistics say someone is about to lose big.',
-  'God bless Israel',
-  'LET IT RIDE',
-  'GOLD GOLD GOLD',
-];
-
 function shuffleArray(arr) {
   const out = [...arr];
   for (let i = out.length - 1; i > 0; i--) {
@@ -124,15 +117,6 @@ function buildGeneralItems(players, raceNumber, cascadeSpinsThisRound) {
     }
   }
 
-  FLAVOR_MESSAGES.forEach((text, i) => {
-    items.push({
-      id: `flavor-${i}`,
-      type: 'flavor',
-      duration: DISPLAY_DURATION_MS,
-      data: { text },
-    });
-  });
-
   return shuffleArray(items);
 }
 
@@ -201,7 +185,7 @@ export function useFooterContent({ players, raceNumber = 1, cascadeSpinsThisRoun
 
     // Interleave: 1 user item for every ~3 general items (if user pool has items)
     const shouldShowUser =
-      userPoolRef.current.length > 0 && generalSinceUserRef.current >= 3;
+      userPoolRef.current.length > 0 && generalSinceUserRef.current >= 2;
 
     if (shouldShowUser) {
       const item = userPoolRef.current.shift();

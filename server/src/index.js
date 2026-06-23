@@ -1773,6 +1773,8 @@ io.on('connection', (socket) => {
         } catch (_) { /* non-fatal */ }
         // Tell all player clients to return to the main menu
         io.emit('game-reset');
+        // Broadcast fresh empty state so host views clear old player data
+        emitGameState();
         break;
       }
       case 'debug-add-bots':

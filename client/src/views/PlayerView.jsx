@@ -61,6 +61,19 @@ function PlayerView({ gameState, socket }) {
     return () => socket.off('your-player-id', onYourPlayerId);
   }, [socket]);
 
+  // Fallback: if your-player-id was missed but game-state arrived, find self by realName
+  useEffect(() => {
+    if (myPlayerId && gameState.players.find((p) => p.id === myPlayerId)) return;
+    const realName = storedCreds.current?.realName;
+    if (!realName) return;
+    const byName = gameState.players.find(
+      (p) => String(p.realName || '').toLowerCase().trim() === String(realName).toLowerCase().trim()
+    );
+    if (byName && byName.id !== myPlayerId) {
+      setMyPlayerId(byName.id);
+    }
+  }, [gameState.players, myPlayerId]);
+
   // Return to main menu if kicked or game is reset
   useEffect(() => {
     const handleKicked = () => {
@@ -72,6 +85,8 @@ function PlayerView({ gameState, socket }) {
       storedCreds.current = null;
       setMode('menu');
       setServerError(null);
+      setMyPlayerId(null);
+      lastMeRef.current = null;
     };
     socket.on('kicked', handleKicked);
     socket.on('game-reset', handleGameReset);
