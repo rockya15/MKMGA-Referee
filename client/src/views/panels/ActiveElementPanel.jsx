@@ -18,14 +18,14 @@ function VoteElement({ players, groupVote, voteResult, voteTimeLeft, voteCounts,
     if (voteResult) {
       return (
         <div style={s.voteResultBanner}>
-          Vote resolved — <strong>{players.find((p) => p.id === voteResult.timedOutPlayer)?.displayName ?? 'Player'}</strong> will <strong>{voteResult.result.toUpperCase()}</strong>
+          Vote resolved — <strong>{voteResult.timedOutPlayerName ?? players.find((p) => p.id === voteResult.timedOutPlayer)?.displayName ?? 'Player'}</strong> will <strong>{voteResult.result.toUpperCase()}</strong>
         </div>
       );
     }
     return (
       <div style={s.votePanel}>
         <div style={s.votePanelTitle}>
-          GROUP VOTE — <span style={{ color: '#e07070' }}>{players.find((p) => p.id === groupVote.timedOutPlayer)?.displayName ?? 'Player'}</span> timed out
+          GROUP VOTE — <span style={{ color: '#e07070' }}>{groupVote.timedOutPlayerName ?? players.find((p) => p.id === groupVote.timedOutPlayer)?.displayName ?? 'Player'}</span> timed out
         </div>
         <div style={s.votePanelSub}>Other players are voting... {voteTimeLeft}s remaining</div>
         <div style={s.votePanelTimerBarWrap}>
@@ -48,14 +48,14 @@ function VoteElement({ players, groupVote, voteResult, voteTimeLeft, voteCounts,
     if (positionVoteResult) {
       return (
         <div style={s.voteResultBanner}>
-          Position vote resolved — <strong>{players.find((p) => p.id === positionVoteResult.timedOutPlayer)?.displayName ?? 'Player'}</strong> assigned: <strong>{positionVoteResult.assignedPositions.join(', ')}</strong>
+          Position vote resolved — <strong>{positionVoteResult.timedOutPlayerName ?? players.find((p) => p.id === positionVoteResult.timedOutPlayer)?.displayName ?? 'Player'}</strong> assigned: <strong>{positionVoteResult.assignedPositions.join(', ')}</strong>
         </div>
       );
     }
     return (
       <div style={{ ...s.votePanel, borderColor: '#cc8844', boxShadow: '0 0 40px rgba(200,140,80,0.5)' }}>
         <div style={{ ...s.votePanelTitle, color: '#ffaa55' }}>
-          POSITION VOTE — <span style={{ color: '#e07070' }}>{players.find((p) => p.id === positionVote.timedOutPlayer)?.displayName ?? 'Player'}</span> timed out ({positionVote.picksNeeded} pick{positionVote.picksNeeded > 1 ? 's' : ''} needed)
+          POSITION VOTE — <span style={{ color: '#e07070' }}>{positionVote.timedOutPlayerName ?? players.find((p) => p.id === positionVote.timedOutPlayer)?.displayName ?? 'Player'}</span> timed out ({positionVote.picksNeeded} pick{positionVote.picksNeeded > 1 ? 's' : ''} needed)
         </div>
         <div style={s.votePanelSub}>Players are voting on their position{positionVote.picksNeeded > 1 ? 's' : ''}... {positionVoteTimeLeft}s remaining</div>
         <div style={s.votePanelTimerBarWrap}>

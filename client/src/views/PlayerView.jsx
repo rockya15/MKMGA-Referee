@@ -26,6 +26,7 @@ function PlayerView({ gameState, socket }) {
   const [voteCounts, setVoteCounts] = useState({});
   const [myVote, setMyVote] = useState(null);
   const [activeTimer, setActiveTimer] = useState(null); // { playerId, timeLeft, mode }
+  const [myPlayerId, setMyPlayerId] = useState(null);
 
   // ── Position-vote state ──────────────────────────────────────────────────────
   const [positionVote, setPositionVote] = useState(null);
@@ -51,6 +52,13 @@ function PlayerView({ gameState, socket }) {
     };
     socket.on('connect', handleConnect);
     return () => socket.off('connect', handleConnect);
+  }, [socket]);
+
+  // Receive stable player ID from server after join or reconnect
+  useEffect(() => {
+    const onYourPlayerId = (id) => setMyPlayerId(id);
+    socket.on('your-player-id', onYourPlayerId);
+    return () => socket.off('your-player-id', onYourPlayerId);
   }, [socket]);
 
   // Return to main menu if kicked or game is reset
@@ -208,7 +216,7 @@ function PlayerView({ gameState, socket }) {
     };
   }, [socket]);
 
-  const currentMe = gameState.players.find((p) => p.id === socket.id);
+  const currentMe = gameState.players.find((p) => p.id === myPlayerId);
   const lastMeRef = useRef(null);
   if (currentMe) lastMeRef.current = currentMe;
   // While reconnecting, use the last known player data so the UI doesn't flicker.

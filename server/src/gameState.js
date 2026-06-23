@@ -148,6 +148,10 @@ class GameState {
     return this.players.find((player) => player.id === playerId);
   }
 
+  getPlayerBySocketId(socketId) {
+    return this.players.find((player) => player.socketId === socketId);
+  }
+
   getPayingPlayers() {
     return this.players.filter((player) => player.paidEntry);
   }
@@ -283,7 +287,8 @@ class GameState {
     const passwordHash = hasPassword ? hashPassword(password, salt) : null;
 
     const player = {
-      id: socketId,
+      id: crypto.randomUUID(),
+      socketId: socketId,
       connected: true,
       displayName,
       realName,
@@ -327,12 +332,12 @@ class GameState {
     }
 
     // Already on this exact socket — nothing to do.
-    if (candidate.id === socketId && candidate.connected) {
+    if (candidate.socketId === socketId && candidate.connected) {
       return { player: candidate, rejoined: true };
     }
 
     if (!candidate.salt || !candidate.passwordHash) {
-      candidate.id = socketId;
+      candidate.socketId = socketId;
       candidate.connected = true;
       return { player: candidate, rejoined: true };
     }
@@ -342,13 +347,13 @@ class GameState {
       return { error: 'Incorrect password.' };
     }
 
-    candidate.id = socketId;
+    candidate.socketId = socketId;
     candidate.connected = true;
     return { player: candidate, rejoined: true };
   }
 
   markDisconnected(socketId) {
-    const player = this.getPlayerById(socketId);
+    const player = this.getPlayerBySocketId(socketId) || this.getPlayerById(socketId);
     if (player) {
       player.connected = false;
     }

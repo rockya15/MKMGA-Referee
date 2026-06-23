@@ -26,6 +26,11 @@ class TimerManager {
     if (this._serverLog) this._serverLog('timers', msg);
   }
 
+  _getPlayerDisplayName(playerId) {
+    const player = this.gameState.getPlayerById(playerId);
+    return player?.displayName || player?.realName || String(playerId || 'Unknown');
+  }
+
   // Start a countdown timer for a player.
   // mode: 'betting' (60s, triggers group vote on timeout)
   //       'position' (30s, auto-picks on timeout)
@@ -159,6 +164,7 @@ class TimerManager {
     this._log(`[TimerManager] position-vote-start — player=${playerId} picks=${picksNeeded} voters=${voterIds.length}`);
     this.io.emit('position-vote-start', {
       timedOutPlayer: playerId,
+      timedOutPlayerName: this._getPlayerDisplayName(playerId),
       voters: voterIds,
       options: availablePositions,
       picksNeeded,
@@ -245,6 +251,7 @@ class TimerManager {
     this._log(`[TimerManager] position-vote-result — player=${timedOutPlayer} assigned=${assigned.join(',')}`);
     this.io.emit('position-vote-result', {
       timedOutPlayer,
+      timedOutPlayerName: this._getPlayerDisplayName(timedOutPlayer),
       assignedPositions: assigned,
       voteCounts,
     });
@@ -310,6 +317,7 @@ class TimerManager {
     this._log(`[TimerManager] cascade-response-vote-start — player=${playerId} voters=${voterIds.length}`);
     this.io.emit('cascade-response-vote-start', {
       timedOutPlayer: playerId,
+      timedOutPlayerName: this._getPlayerDisplayName(playerId),
       voters: voterIds,
       endsInSeconds: voteTimeLeft,
     });
@@ -364,7 +372,13 @@ class TimerManager {
     const doCascade = cascadeVotes >= acceptVotes;
 
     this._log(`[TimerManager] cascade-response-vote-result — player=${timedOutPlayer} doCascade=${doCascade} (${cascadeVotes} cascade / ${acceptVotes} accept)`);
-    this.io.emit('cascade-response-vote-result', { timedOutPlayer, doCascade, cascadeVotes, acceptVotes });
+    this.io.emit('cascade-response-vote-result', {
+      timedOutPlayer,
+      timedOutPlayerName: this._getPlayerDisplayName(timedOutPlayer),
+      doCascade,
+      cascadeVotes,
+      acceptVotes,
+    });
 
     this.cascadeResponseVoteSession = null;
     this.timeoutPlayer = null;
@@ -404,6 +418,7 @@ class TimerManager {
 
     this.io.emit('group-vote-start', {
       timedOutPlayer: this.timeoutPlayer,
+      timedOutPlayerName: this._getPlayerDisplayName(this.timeoutPlayer),
       voters: voterIds,
       options,
       endsInSeconds: voteTimeLeft,
@@ -492,6 +507,7 @@ class TimerManager {
     const actionResult = this.bettingEngine.processAction(timedOutPlayer, result);
     this.io.emit('group-vote-result', {
       timedOutPlayer,
+      timedOutPlayerName: this._getPlayerDisplayName(timedOutPlayer),
       result,
       voteCounts,
       votes: individualVotes,

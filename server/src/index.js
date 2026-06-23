@@ -447,7 +447,7 @@ const timerManager = new TimerManager(
 );
 
 function sanitizePlayerForClient(player) {
-  const { passwordHash, salt, ...rest } = player;
+  const { passwordHash, salt, socketId, ...rest } = player;
   return {
     ...rest,
     hasPassword: Boolean(passwordHash && salt),
@@ -472,6 +472,11 @@ function emitGameState() {
 
 function roundToQuarter(value) {
   return Math.round(Number(value || 0) * 4) / 4;
+}
+
+function emitToPlayer(playerId, event, data) {
+  const player = gameState.getPlayerById(playerId);
+  if (player?.socketId) io.to(player.socketId).emit(event, data);
 }
 
 function isForcedCallOnly(playerId) {
@@ -511,7 +516,7 @@ function resolveForcedCallIfNeeded() {
     return false;
   }
 
-  io.to(actorId).emit('forced-call-info', {
+  emitToPlayer(actorId, 'forced-call-info', {
     message: `Auto-called $${toCall.toFixed(2)} because your Skip/Fold token is spent and raising is unavailable.`,
     durationMs: 5000,
   });
@@ -1417,6 +1422,8 @@ io.on('connection', (socket) => {
       socket.emit('join-error', result.error);
       return;
     }
+    socket.playerId = result.player.id;
+    socket.emit('your-player-id', result.player.id);
     emitGameState();
   });
 
@@ -1427,12 +1434,16 @@ io.on('connection', (socket) => {
       socket.emit('join-error', result.error);
       return;
     }
+    socket.playerId = result.player.id;
+    socket.emit('your-player-id', result.player.id);
     emitGameState();
   });
 
   socket.on('pre-bet-choice', (data) => {
+    const playerId = socket.playerId;
+    if (!playerId) { socket.emit('error', 'Not identified as a player.'); return; }
     const choice = String(data?.choice || '').toUpperCase();
-    const result = gameState.applyPreBetChoice(socket.id, choice);
+    const result = gameState.applyPreBetChoice(playerId, choice);
     if (result.error) {
       socket.emit('error', result.error);
       return;
@@ -1441,8 +1452,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('position-select', (data) => {
+    const playerId = socket.playerId;
+    if (!playerId) { socket.emit('error', 'Not identified as a player.'); return; }
     const position = String(data?.position || '');
-    const result = gameState.assignPositionWithOptions(socket.id, position, {
+    const result = gameState.assignPositionWithOptions(playerId, position, {
       cascade: Boolean(data?.cascade)
     });
     if (result.error) {
@@ -1453,7 +1466,7 @@ io.on('connection', (socket) => {
     // Emit cascade spin event BEFORE game state so HostView can animate first
     if (result.cascade) {
       const cascade = result.cascade;
-      const initiator = gameState.getPlayerById(socket.id);
+      const initiator = gameState.getPlayerById(playerId);
       serverDebug('cascade', `[CASCADE] Emitting cascade-spin: ${JSON.stringify({ targetPosition: cascade.finalPosition, mode: cascade.mode, level: cascade.level, dnfSlots: cascade.dnfSlots, roll: cascade.roll })}`);
       emitCascadeSpin({
         targetPosition: cascade.finalPosition,
@@ -1480,7 +1493,7 @@ io.on('connection', (socket) => {
       // Check if the same player still has more picks remaining
       const draft = gameState.positionDraft;
       const currentPickerId = gameState.wheelOrder?.[draft?.currentPlayerIndex];
-      if (currentPickerId === socket.id) {
+      if (currentPickerId === playerId) {
         // Still their turn — extend the timer by 10 seconds
         timerManager.addTime(10);
       } else {
@@ -1494,7 +1507,9 @@ io.on('connection', (socket) => {
 
   // Handle betting actions
   socket.on('betting-action', (data) => {
-    const result = bettingEngine.processAction(socket.id, data.action, data.amount);
+    const playerId = socket.playerId;
+    if (!playerId) { socket.emit('error', 'Not identified as a player.'); return; }
+    const result = bettingEngine.processAction(playerId, data.action, data.amount);
     if (result.error) {
       socket.emit('error', result.error);
     } else {
@@ -1504,7 +1519,9 @@ io.on('connection', (socket) => {
   });
 
   socket.on('group-vote', (data) => {
-    const result = timerManager.submitVote(socket.id, data?.action);
+    const playerId = socket.playerId;
+    if (!playerId) return;
+    const result = timerManager.submitVote(playerId, data?.action);
     if (result.error) {
       socket.emit('error', result.error);
     }
@@ -1512,7 +1529,9 @@ io.on('connection', (socket) => {
 
   // Position draft timeout vote
   socket.on('position-vote', (data) => {
-    const result = timerManager.submitPositionVote(socket.id, data?.position);
+    const playerId = socket.playerId;
+    if (!playerId) return;
+    const result = timerManager.submitPositionVote(playerId, data?.position);
     if (result.error) {
       socket.emit('error', result.error);
     }
@@ -1520,7 +1539,9 @@ io.on('connection', (socket) => {
 
   // Cascade-response timeout vote (other players vote cascade vs accept-dnf for timed-out player)
   socket.on('cascade-response-vote', (data) => {
-    const result = timerManager.submitCascadeResponseVote(socket.id, data?.choice);
+    const playerId = socket.playerId;
+    if (!playerId) return;
+    const result = timerManager.submitCascadeResponseVote(playerId, data?.choice);
     if (result.error) {
       socket.emit('error', result.error);
     }
@@ -1553,10 +1574,12 @@ io.on('connection', (socket) => {
 
   // Displaced player's response to an active cascade chain
   socket.on('cascade-response', (data) => {
+    const playerId = socket.playerId;
+    if (!playerId) { socket.emit('error', 'Not identified as a player.'); return; }
     const doCascade = Boolean(data?.cascade);
     // Clear the countdown timer — the player responded manually
     timerManager.clearTimer();
-    const result = gameState.respondToDisplacedCascade(socket.id, doCascade);
+    const result = gameState.respondToDisplacedCascade(playerId, doCascade);
     if (result.error) {
       socket.emit('error', result.error);
       return;
@@ -1565,7 +1588,7 @@ io.on('connection', (socket) => {
     // Emit cascade spin event before game state update
     if (result.cascaded && result.outcome) {
       const outcome = result.outcome;
-      const responder = gameState.getPlayerById(socket.id);
+      const responder = gameState.getPlayerById(playerId);
       serverDebug('cascade', `[CASCADE] Emitting cascade-spin (response): ${JSON.stringify({ targetPosition: outcome.finalPosition, mode: outcome.mode, level: outcome.level, dnfSlots: outcome.dnfSlots, roll: outcome.roll })}`);
       emitCascadeSpin({
         targetPosition: outcome.finalPosition,
@@ -1617,7 +1640,7 @@ io.on('connection', (socket) => {
       if (!result.error) {
         timerManager.clearTimer();
         // Notify the kicked player's socket if still connected
-        io.to(playerId).emit('kicked', { reason: 'You were removed by the host.' });
+        emitToPlayer(playerId, 'kicked', { reason: 'You were removed by the host.' });
       }
     } else if (['manual-eliminate', 'manual_eliminate', 'eliminate-player', 'eliminate'].includes(String(action || '').toLowerCase())) {
       result = gameState.adminEliminatePlayer(playerId);
