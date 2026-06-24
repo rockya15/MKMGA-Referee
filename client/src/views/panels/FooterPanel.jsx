@@ -34,8 +34,7 @@ function FunStatementItem({ player, text }) {
       {player?.profileImageUrl && (
         <img src={player.profileImageUrl} alt={player.displayName} style={s.avatar} />
       )}
-      <div style={s.name(accent)}>{player?.displayName}</div>
-      <div style={s.divider} />
+      <div style={s.name(accent)}>{player?.displayName} says:</div>
       <div style={s.text}>"{text}"</div>
     </div>
   );

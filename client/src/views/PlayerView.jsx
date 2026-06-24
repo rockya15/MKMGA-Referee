@@ -265,6 +265,15 @@ function PlayerView({ gameState, socket }) {
     return ALL_POSITIONS.filter((pos) => !positionDraft.occupiedPositions?.[pos]);
   })();
 
+  const isFreeChoice = positionDraft?.freeChoice === true;
+  const iHavePickedFreeChoice = isFreeChoice && me?.paidEntry && (positionDraft?.remainingByPlayer?.[me?.id] ?? 1) === 0;
+  const freeChoicePickedCount = isFreeChoice
+    ? Object.values(positionDraft?.remainingByPlayer ?? {}).filter((r) => r === 0).length
+    : 0;
+  const freeChoiceTotalCount = isFreeChoice
+    ? Object.keys(positionDraft?.remainingByPlayer ?? {}).length
+    : 0;
+
   const cascadeSpent = positionDraft?.cascadeChainSpent ?? false;
   const cascadeChain = positionDraft?.cascadeChain ?? null;
   const iAmPendingDisplacedInChain = !!(cascadeChain && cascadeChain.pendingDisplacedId === me?.id);
@@ -802,6 +811,32 @@ function PlayerView({ gameState, socket }) {
             /* Normal pick UI */
             !me.paidEntry ? (
               <div style={styles.phaseInfo}>You skipped this race.</div>
+            ) : isFreeChoice ? (
+              iHavePickedFreeChoice ? (
+                <div style={styles.phaseInfo}>
+                  ✅ Position <strong>{me?.positions?.[0]}</strong> locked in! Waiting for others… ({freeChoicePickedCount}/{freeChoiceTotalCount} picked)
+                </div>
+              ) : (
+                <>
+                  <div style={styles.phaseInfo}>Pick your position! ({freeChoicePickedCount}/{freeChoiceTotalCount} picked)</div>
+                  <div style={styles.positionGrid}>
+                    {ALL_POSITIONS.map((pos) => (
+                      <button
+                        key={pos}
+                        style={{
+                          ...styles.posBtn,
+                          background: pos === 'DNF' ? '#3a1a1a' : '#1a2a1a',
+                          color: pos === 'DNF' ? '#e74c3c' : '#fff',
+                          border: '1px solid #444',
+                        }}
+                        onClick={() => pickPosition(pos)}
+                      >
+                        {pos}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )
             ) : isMyPickTurn && myTimer ? (
             <>
               <div style={styles.phaseInfo}>Your turn! Pick {picksRemaining} position(s).</div>

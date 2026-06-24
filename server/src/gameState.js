@@ -11,6 +11,7 @@ const STAGES = {
   BETTING: 'BETTING',
   RACE_PENDING_RESULT: 'RACE_PENDING_RESULT',
   PAYOUT: 'PAYOUT',
+  ELIMINATION_SCREEN: 'ELIMINATION_SCREEN',
   GAME_OVER: 'GAME_OVER'
 };
 
@@ -47,6 +48,7 @@ class GameState {
     this.bettingState = this.createEmptyBettingState();
     this.raceResult = null;
     this.preservePositionsNextRace = false;
+    this.newlyEliminatedIds = [];
     this.publicJoinUrl = process.env.PUBLIC_JOIN_URL || '';
   }
 
@@ -64,6 +66,7 @@ class GameState {
       bettingState: this.bettingState,
       raceResult: this.raceResult,
       preservePositionsNextRace: this.preservePositionsNextRace,
+      newlyEliminatedIds: this.newlyEliminatedIds,
       publicJoinUrl: this.publicJoinUrl
     };
   }
@@ -183,7 +186,8 @@ class GameState {
 
   applyNoRevivePolicy() {
     const aliveCount = this.players.filter((player) => player.balance > 0 && player.eliminationState !== 'failed_resurrection').length;
-    if (aliveCount <= 4) {
+    const anyPermanentlyEliminated = this.players.some((player) => player.eliminationState === 'failed_resurrection');
+    if (aliveCount <= 4 && anyPermanentlyEliminated) {
       this.players.forEach((player) => {
         player.noRevive = true;
       });
@@ -655,33 +659,45 @@ class GameState {
       return { success: true, preserved: true };
     }
 
-    this.wheelOrder = [...payingPlayers]
-      .sort(() => Math.random() - 0.5)
-      .map((player) => player.id);
-
-    const picksByPlayer = {};
     if (payingPlayers.length > POSITIONS.length) {
-      this.wheelOrder.forEach((playerId) => {
-        picksByPlayer[playerId] = 1;
-      });
+      // Free choice mode: >13 paying players, all pick simultaneously.
+      // wheelOrder starts empty and is populated in the order players pick (= betting order).
+      this.wheelOrder = [];
+      const remainingByPlayer = {};
+      payingPlayers.forEach((p) => { remainingByPlayer[p.id] = 1; });
+      this.positionDraft = {
+        mode: 'NON_EXCLUSIVE',
+        freeChoice: true,
+        remainingByPlayer,
+        occupiedPositions: {},
+        currentPlayerIndex: 0,
+        selectedCount: 0,
+        cascadeChainSpent: false,
+        cascadeChain: null,
+      };
     } else {
+      this.wheelOrder = [...payingPlayers]
+        .sort(() => Math.random() - 0.5)
+        .map((player) => player.id);
+
+      const picksByPlayer = {};
       const base = Math.floor(POSITIONS.length / payingPlayers.length);
       const remainder = POSITIONS.length % payingPlayers.length;
       this.wheelOrder.forEach((playerId, index) => {
         picksByPlayer[playerId] = base + (index < remainder ? 1 : 0);
       });
-    }
 
-    this.positionDraft = {
-      mode: payingPlayers.length > POSITIONS.length ? 'NON_EXCLUSIVE' : 'EXCLUSIVE',
-      picksByPlayer,
-      remainingByPlayer: { ...picksByPlayer },
-      occupiedPositions: {},
-      currentPlayerIndex: 0,
-      selectedCount: 0,
-      cascadeChainSpent: false,
-      cascadeChain: null,
-    };
+      this.positionDraft = {
+        mode: 'EXCLUSIVE',
+        picksByPlayer,
+        remainingByPlayer: { ...picksByPlayer },
+        occupiedPositions: {},
+        currentPlayerIndex: 0,
+        selectedCount: 0,
+        cascadeChainSpent: false,
+        cascadeChain: null,
+      };
+    }
 
     this.setStage(STAGES.POSITION_ASSIGNMENT);
     return { success: true };
@@ -916,9 +932,15 @@ class GameState {
       return { error: 'Position draft is not initialized.' };
     }
 
-    const currentPicker = this.getCurrentPositionPicker();
-    if (currentPicker !== playerId) {
-      return { error: 'Not your turn to pick.' };
+    if (this.positionDraft.freeChoice) {
+      if ((this.positionDraft.remainingByPlayer[playerId] ?? 0) === 0) {
+        return { error: 'You have already picked a position.' };
+      }
+    } else {
+      const currentPicker = this.getCurrentPositionPicker();
+      if (currentPicker !== playerId) {
+        return { error: 'Not your turn to pick.' };
+      }
     }
 
     if (this.positionDraft.mode === 'EXCLUSIVE' && this.positionDraft.occupiedPositions[position]) {
@@ -965,15 +987,20 @@ class GameState {
       }
     }
 
-    while (this.positionDraft.currentPlayerIndex < this.wheelOrder.length) {
-      const activePlayerId = this.wheelOrder[this.positionDraft.currentPlayerIndex];
-      if (this.positionDraft.remainingByPlayer[activePlayerId] > 0) break;
-      this.positionDraft.currentPlayerIndex += 1;
+    if (this.positionDraft.freeChoice) {
+      this.wheelOrder.push(playerId);
+    } else {
+      while (this.positionDraft.currentPlayerIndex < this.wheelOrder.length) {
+        const activePlayerId = this.wheelOrder[this.positionDraft.currentPlayerIndex];
+        if (this.positionDraft.remainingByPlayer[activePlayerId] > 0) break;
+        this.positionDraft.currentPlayerIndex += 1;
+      }
     }
 
-    const complete =
-      !this.positionDraft.cascadeChain &&
-      this.wheelOrder.every((id) => this.positionDraft.remainingByPlayer[id] === 0);
+    const complete = this.positionDraft.freeChoice
+      ? Object.values(this.positionDraft.remainingByPlayer).every((r) => r === 0)
+      : (!this.positionDraft.cascadeChain &&
+         this.wheelOrder.every((id) => this.positionDraft.remainingByPlayer[id] === 0));
     if (complete) {
       this.positionDraft.currentPlayerIndex = this.wheelOrder.length;
     }
@@ -1043,13 +1070,15 @@ class GameState {
       return { error: 'Game is over.' };
     }
 
+    // Snapshot elimination states before resetting player data
+    const prevEliminationStates = new Map(this.players.map((p) => [p.id, p.eliminationState ?? 'alive']));
+
     this.raceNumber += 1;
     this.entryFee = this.getEntryFee();
     this.positionDraft = null;
     this.bettingState = this.createEmptyBettingState();
     this.raceResult = null;
     this.cascadeSpinsThisRound = 0;
-    this.setStage(STAGES.PRE_BET);
 
     this.players.forEach((player) => {
       player.paidEntry = false;
@@ -1066,6 +1095,37 @@ class GameState {
 
     this.updateEliminationStates();
 
+    const alive = this.getAlivePlayers();
+    if (alive.length <= 1) {
+      this.newlyEliminatedIds = [];
+      this.setStage(STAGES.GAME_OVER);
+      return { success: true };
+    }
+
+    const newlyEliminated = this.players.filter((p) => {
+      const prev = prevEliminationStates.get(p.id) ?? 'alive';
+      const isNowDead = p.eliminationState === 'failed_resurrection' || p.eliminationState === 'pending_resurrection';
+      const wasAliveBefore = prev !== 'failed_resurrection' && prev !== 'pending_resurrection';
+      return isNowDead && wasAliveBefore;
+    });
+
+    if (newlyEliminated.length > 0) {
+      this.newlyEliminatedIds = newlyEliminated.map((p) => p.id);
+      this.setStage(STAGES.ELIMINATION_SCREEN);
+    } else {
+      this.newlyEliminatedIds = [];
+      this.setStage(STAGES.PRE_BET);
+    }
+
+    return { success: true };
+  }
+
+  advanceFromEliminationScreen() {
+    if (this.currentStage !== STAGES.ELIMINATION_SCREEN) {
+      return { error: 'Not on elimination screen.' };
+    }
+    this.newlyEliminatedIds = [];
+    this.setStage(STAGES.PRE_BET);
     return { success: true };
   }
 
@@ -1081,6 +1141,7 @@ class GameState {
     this.bettingState = this.createEmptyBettingState();
     this.raceResult = null;
     this.preservePositionsNextRace = false;
+    this.newlyEliminatedIds = [];
     return { success: true };
   }
 

@@ -42,13 +42,35 @@ function HostView({ gameState, socket }) {
   const [cascadeSpinning, setCascadeSpinning] = useState(false);
   const [cascadeSpinResult, setCascadeSpinResult] = useState(null);
   const cascadeSpinDataRef = useRef(null);
+  // Snapshot of player positions captured right when a cascade-spin event arrives,
+  // before the server's game-state update (with swapped positions) lands.
+  const preCascadePositionsRef = useRef(null);
   const cascadeSpinStartTimeoutRef = useRef(null);
   const cascadeResultHoldTimeoutRef = useRef(null);
 
   const [payoutTotalAmount, setPayoutTotalAmount] = useState(0);
   const [payoutScrollReady, setPayoutScrollReady] = useState(false);
   const handlePayoutEffectDone = useCallback(() => setPayoutScrollReady(true), []);
+
+  const [eliminatedPlayers, setEliminatedPlayers] = useState([]);
+  const [suppressedEliminatedIds, setSuppressedEliminatedIds] = useState(new Set());
+
+  const handleSkullLanded = useCallback((playerId) => {
+    setSuppressedEliminatedIds((prev) => {
+      if (!prev.has(playerId)) return prev;
+      const next = new Set(prev);
+      next.delete(playerId);
+      return next;
+    });
+  }, []);
   const prevGameStateRef = useRef({ currentStage, players });
+
+  const [footerClearKey, setFooterClearKey] = useState(0);
+  useEffect(() => {
+    const onClearFooter = () => setFooterClearKey((k) => k + 1);
+    socket.on('clear-footer', onClearFooter);
+    return () => socket.off('clear-footer', onClearFooter);
+  }, [socket]);
 
   const clearCascadeSpinStartTimeout = useCallback(() => {
     if (cascadeSpinStartTimeoutRef.current) {
@@ -132,6 +154,10 @@ function HostView({ gameState, socket }) {
         segmentColors: segColors,
         targetIndex: roll - 1,
       };
+      // Snapshot positions before game-state with swapped positions arrives
+      preCascadePositionsRef.current = new Map(
+        playersRef.current.map((p) => [p.id, Array.isArray(p.positions) ? [...p.positions] : []])
+      );
       clearCascadeSpinStartTimeout();
       cascadeSpinDataRef.current = spinData;
       setWheelSpawnKey((k) => k + 1);
@@ -156,6 +182,7 @@ function HostView({ gameState, socket }) {
       setCascadeSpinning(false);
       setCascadeSpinResult(null);
       cascadeSpinDataRef.current = null;
+      preCascadePositionsRef.current = null;
     }
   }, [currentStage, clearCascadeSpinStartTimeout, clearCascadeResultHoldTimeout]);
 
@@ -164,7 +191,8 @@ function HostView({ gameState, socket }) {
     clearCascadeResultHoldTimeout();
   }, [clearCascadeSpinStartTimeout, clearCascadeResultHoldTimeout]);
 
-  // Track total amount distributed when entering PAYOUT stage
+  // Track total amount distributed when entering PAYOUT stage.
+  // Also detect newly eliminated players when entering ELIMINATION_SCREEN.
   useEffect(() => {
     const prev = prevGameStateRef.current;
     if (prev.currentStage !== 'PAYOUT' && currentStage === 'PAYOUT') {
@@ -178,6 +206,21 @@ function HostView({ gameState, socket }) {
         totalDelta += w.balance - (prevPlayer?.balance ?? w.balance);
       });
       setPayoutTotalAmount(Math.max(0, totalDelta));
+    }
+    if (prev.currentStage !== 'ELIMINATION_SCREEN' && currentStage === 'ELIMINATION_SCREEN') {
+      const newlyElim = players.filter((p) => {
+        const prevPlayer = prev.players.find((q) => q.id === p.id);
+        const prevState = prevPlayer?.eliminationState ?? 'alive';
+        const isNowDead = p.eliminationState === 'failed_resurrection' || p.eliminationState === 'pending_resurrection';
+        const wasAliveBefore = prevState !== 'failed_resurrection' && prevState !== 'pending_resurrection';
+        return isNowDead && wasAliveBefore;
+      });
+      setEliminatedPlayers(newlyElim);
+      setSuppressedEliminatedIds(new Set(newlyElim.map((p) => p.id)));
+    }
+    if (prev.currentStage === 'ELIMINATION_SCREEN' && currentStage !== 'ELIMINATION_SCREEN') {
+      setEliminatedPlayers([]);
+      setSuppressedEliminatedIds(new Set());
     }
     prevGameStateRef.current = { currentStage, players };
   }, [currentStage, players, raceResult]);
@@ -358,17 +401,33 @@ function HostView({ gameState, socket }) {
       ? `${cascadeSpinData?.initiatorName ?? 'Someone'} took ${cascadePromptPlayer.displayName}'s position!`
       : 'THE WHEEL IS SPINNING';
   const hasVoteElement = !!(groupVote || voteResult || positionVote || positionVoteResult);
-  const hasWheelElement = WHEEL_STAGES.includes(currentStage);
+  const hasFreeChoiceElement = currentStage === 'POSITION_ASSIGNMENT' && !!positionDraft?.freeChoice;
+  const hasWheelElement = WHEEL_STAGES.includes(currentStage) && !hasFreeChoiceElement;
   const payoutWinners = currentStage === 'PAYOUT'
     ? players.filter((player) => player.paidEntry && !player.folded && player.positions?.includes(raceResult))
     : [];
   const payoutWinnerIds = new Set(payoutWinners.map((player) => player.id));
   const hasPayoutElement = currentStage === 'PAYOUT';
-  const activeElementType = hasVoteElement ? 'vote' : hasWheelElement ? 'wheel' : hasPayoutElement ? 'payout' : null;
+  const hasEliminationElement = currentStage === 'ELIMINATION_SCREEN' && eliminatedPlayers.length > 0;
+  const activeElementType = hasVoteElement ? 'vote' : hasFreeChoiceElement ? 'free-choice' : hasWheelElement ? 'wheel' : hasPayoutElement ? 'payout' : hasEliminationElement ? 'elimination' : null;
   const wheelIsBusy = hasWheelElement && (spinning || cascadeSpinning);
   const leaderboardAutoScrollEnabled = currentStage !== 'RACE_PENDING_RESULT' && !wheelIsBusy;
 
-  const footerVisible = players.length > 0;
+  // While cascade wheel is spinning (before result shows), freeze pre-swap positions.
+  // While on elimination screen, suppress eliminationState for players whose skull hasn't landed yet.
+  const leaderboardPlayers = useMemo(() => {
+    const cascadeFreeze = cascadeActive && cascadeSpinResult === null && preCascadePositionsRef.current;
+    const hasSuppressed = suppressedEliminatedIds.size > 0;
+    if (!cascadeFreeze && !hasSuppressed) return players;
+    return players.map((p) => {
+      const overrides = {};
+      if (cascadeFreeze) overrides.positions = preCascadePositionsRef.current.get(p.id) ?? p.positions;
+      if (hasSuppressed && suppressedEliminatedIds.has(p.id)) overrides.eliminationState = 'alive';
+      return Object.keys(overrides).length > 0 ? { ...p, ...overrides } : p;
+    });
+  }, [cascadeActive, cascadeSpinResult, players, suppressedEliminatedIds]);
+
+  const footerVisible = currentStage === 'LOBBY' || players.length > 0;
   const footerMode = activeElementType ? 'leaderboard' : 'full';
   const layout = usePanelLayout({ currentStage, activeElementType });
 
@@ -432,6 +491,9 @@ function HostView({ gameState, socket }) {
               payoutWinners={payoutWinners}
               payoutTotalAmount={payoutTotalAmount}
               onPayoutEffectDone={handlePayoutEffectDone}
+              eliminatedPlayers={eliminatedPlayers}
+              suppressedEliminatedIds={suppressedEliminatedIds}
+              onSkullLanded={handleSkullLanded}
               getFavoriteColor={getFavoriteColor}
             />
           </AnimatedPanel>
@@ -447,7 +509,7 @@ function HostView({ gameState, socket }) {
             style={styles.leaderboardPanel}
           >
             <LeaderboardPanel
-              players={players}
+              players={leaderboardPlayers}
               gameState={gameState}
               activeTimer={activeTimer}
               wheelFocusPlayerId={wheelFocusPlayerId}
@@ -462,12 +524,12 @@ function HostView({ gameState, socket }) {
           </AnimatedPanel>
 
           {/* Footer — leaderboard-only mode (sits below leaderboard column) */}
-          <FooterDisplay players={players} visible={footerMode === 'leaderboard' && footerVisible} raceNumber={raceNumber} cascadeSpinsThisRound={cascadeSpinsThisRound} />
+          <FooterDisplay key={`footer-lb-${footerClearKey}`} players={players} visible={footerMode === 'leaderboard' && footerVisible} raceNumber={raceNumber} cascadeSpinsThisRound={cascadeSpinsThisRound} currentStage={currentStage} />
         </div>{/* end leaderboardCol */}
         </div>{/* end topRow */}
 
         {/* Footer — full-width mode (sits below both panels) */}
-        <FooterDisplay players={players} visible={footerMode === 'full' && footerVisible} raceNumber={raceNumber} cascadeSpinsThisRound={cascadeSpinsThisRound} />
+        <FooterDisplay key={`footer-full-${footerClearKey}`} players={players} visible={footerMode === 'full' && footerVisible} raceNumber={raceNumber} cascadeSpinsThisRound={cascadeSpinsThisRound} ugcFirst={true} currentStage={currentStage} />
       </div>
     </div>
   );

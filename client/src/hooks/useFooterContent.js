@@ -19,10 +19,17 @@ function shuffleArray(arr) {
   return out;
 }
 
-/** Build user-generated items (fun statements + drawings) from current players. */
+function isBotPlayer(p) {
+  if (Boolean(p?.isBot)) return true;
+  const id = String(p?.id ?? '').toLowerCase();
+  const name = String(p?.realName ?? '').toLowerCase();
+  return id.startsWith('bot-') || name.startsWith('bot_');
+}
+
+/** Build user-generated items (fun statements + drawings) from real players only. */
 function buildUserItems(players) {
   const items = [];
-  players.forEach((p) => {
+  players.filter((p) => !isBotPlayer(p)).forEach((p) => {
     if (String(p.funStatement || '').trim()) {
       items.push({
         id: `fun-${p.id}`,
@@ -91,16 +98,6 @@ function buildGeneralItems(players, raceNumber, cascadeSpinsThisRound) {
       });
     }
 
-    // Cascade spins this round (only if at least 1 has happened)
-    if (cascadeSpinsThisRound > 0) {
-      items.push({
-        id: 'stat-cascades',
-        type: 'stat',
-        duration: DISPLAY_DURATION_MS,
-        data: { label: 'CASCADE SPINS THIS ROUND', value: cascadeSpinsThisRound, icon: '🌀', raw: true },
-      });
-    }
-
     // Balance graph (only if race 2+, and at least one player has 2+ data points)
     if (raceNumber >= 2) {
       const playersWithHistory = active.filter(
@@ -126,18 +123,23 @@ function buildGeneralItems(players, raceNumber, cascadeSpinsThisRound) {
  * Manages the footer content queue.
  * - User-generated content (fun statements, drawings) cycles through its entire pool
  *   exactly once before any item repeats. New items added mid-game are injected into
- *   the remaining pool immediately.
+ *   the remaining pool immediately. Bot players are excluded from UGC.
  * - General content (stats, flavor) reshuffles every time it exhausts.
+ *   Stats will not appear back-to-back.
+ * - ugcFirst: when true (leaderboard phase), UGC is shown after every 1 general item
+ *   instead of every 2.
  * - Accepts priority event items via pushEvent().
  */
-export function useFooterContent({ players, raceNumber = 1, cascadeSpinsThisRound = 0 }) {
+export function useFooterContent({ players, raceNumber = 1, cascadeSpinsThisRound = 0, ugcFirst = false }) {
   const playersRef          = useRef(players);
   const raceNumberRef       = useRef(raceNumber);
   const cascadeRef          = useRef(cascadeSpinsThisRound);
+  const ugcFirstRef         = useRef(ugcFirst);
 
   useEffect(() => { playersRef.current = players; }, [players]);
   useEffect(() => { raceNumberRef.current = raceNumber; }, [raceNumber]);
   useEffect(() => { cascadeRef.current = cascadeSpinsThisRound; }, [cascadeSpinsThisRound]);
+  useEffect(() => { ugcFirstRef.current = ugcFirst; }, [ugcFirst]);
 
   const [currentItem, setCurrentItem] = useState(null);
 
@@ -148,8 +150,11 @@ export function useFooterContent({ players, raceNumber = 1, cascadeSpinsThisRoun
   // General pool: reshuffles whenever exhausted
   const generalPoolRef  = useRef([]);
 
-  // How many consecutive general items shown since last user item (for interleaving 1:3)
+  // How many consecutive general items shown since last user item
   const generalSinceUserRef = useRef(0);
+
+  // Type of the last item shown — used to prevent back-to-back stats
+  const lastItemTypeRef = useRef(null);
 
   // Priority queue for event-driven items
   const priorityRef = useRef([]);
@@ -157,6 +162,8 @@ export function useFooterContent({ players, raceNumber = 1, cascadeSpinsThisRoun
   const displayTimerRef    = useRef(null);
   const transitionTimerRef = useRef(null);
   const cycleRef           = useRef(null);
+  // true when the cycle stopped due to empty pools (no timer pending)
+  const cycleIdleRef       = useRef(true);
 
   /** Add any user items that aren't already shown or pending */
   const refreshUserPool = useCallback(() => {
@@ -183,14 +190,16 @@ export function useFooterContent({ players, raceNumber = 1, cascadeSpinsThisRoun
   const getNextItem = useCallback(() => {
     if (priorityRef.current.length > 0) return priorityRef.current.shift();
 
-    // Interleave: 1 user item for every ~3 general items (if user pool has items)
+    // ugcFirst (leaderboard phase): show UGC after 1 general item; otherwise after 2
+    const ugcThreshold = ugcFirstRef.current ? 1 : 2;
     const shouldShowUser =
-      userPoolRef.current.length > 0 && generalSinceUserRef.current >= 2;
+      userPoolRef.current.length > 0 && generalSinceUserRef.current >= ugcThreshold;
 
     if (shouldShowUser) {
       const item = userPoolRef.current.shift();
       userShownIdsRef.current.add(item.id);
       generalSinceUserRef.current = 0;
+      lastItemTypeRef.current = item.type;
       // If user pool just exhausted, clear shown set so the next cycle can start fresh
       if (userPoolRef.current.length === 0) {
         userShownIdsRef.current.clear();
@@ -198,13 +207,36 @@ export function useFooterContent({ players, raceNumber = 1, cascadeSpinsThisRoun
       return item;
     }
 
-    // General item
+    // General item — avoid back-to-back stats
     if (generalPoolRef.current.length === 0) {
       refreshGeneralPool();
     }
-    if (generalPoolRef.current.length === 0) return null;
+    // No general content available (e.g. lobby) — fall back to UGC directly
+    if (generalPoolRef.current.length === 0) {
+      if (userPoolRef.current.length > 0) {
+        const item = userPoolRef.current.shift();
+        userShownIdsRef.current.add(item.id);
+        generalSinceUserRef.current = 0;
+        lastItemTypeRef.current = item.type;
+        if (userPoolRef.current.length === 0) userShownIdsRef.current.clear();
+        return item;
+      }
+      return null;
+    }
 
-    const item = generalPoolRef.current.shift();
+    let item;
+    if (lastItemTypeRef.current === 'stat' && generalPoolRef.current.length > 1) {
+      const nonStatIdx = generalPoolRef.current.findIndex((i) => i.type !== 'stat');
+      if (nonStatIdx !== -1) {
+        item = generalPoolRef.current.splice(nonStatIdx, 1)[0];
+      } else {
+        item = generalPoolRef.current.shift();
+      }
+    } else {
+      item = generalPoolRef.current.shift();
+    }
+
+    lastItemTypeRef.current = item.type;
     generalSinceUserRef.current++;
     return item;
   }, [refreshGeneralPool]);
@@ -217,7 +249,10 @@ export function useFooterContent({ players, raceNumber = 1, cascadeSpinsThisRoun
       const next = getNextItem();
       setCurrentItem(next ?? null);
       if (next) {
+        cycleIdleRef.current = false;
         displayTimerRef.current = setTimeout(() => cycleRef.current?.(), next.duration);
+      } else {
+        cycleIdleRef.current = true;
       }
     }, EXIT_GAP_MS);
   }, [getNextItem]);
@@ -232,7 +267,10 @@ export function useFooterContent({ players, raceNumber = 1, cascadeSpinsThisRoun
       const first = getNextItem();
       setCurrentItem(first ?? null);
       if (first) {
+        cycleIdleRef.current = false;
         displayTimerRef.current = setTimeout(() => cycleRef.current?.(), first.duration);
+      } else {
+        cycleIdleRef.current = true;
       }
     }, 1200);
     return () => {
@@ -242,11 +280,33 @@ export function useFooterContent({ players, raceNumber = 1, cascadeSpinsThisRoun
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Refresh user pool when new players or drawings arrive
+  // Clear all pools and current item when players list empties (e.g. after game reset)
   const playersLen    = players.length;
   const drawingsCount = players.filter((p) => p.drawingImageUrl).length;
   useEffect(() => {
-    if (playersLen > 0) refreshUserPool();
+    if (playersLen === 0) {
+      userPoolRef.current = [];
+      userShownIdsRef.current = new Set();
+      generalPoolRef.current = [];
+      priorityRef.current = [];
+      generalSinceUserRef.current = 0;
+      lastItemTypeRef.current = null;
+      clearTimeout(displayTimerRef.current);
+      clearTimeout(transitionTimerRef.current);
+      setCurrentItem(null);
+    }
+  }, [playersLen]);
+
+  // Refresh user pool when new players or drawings arrive; restart cycle if it went idle
+  useEffect(() => {
+    if (playersLen > 0) {
+      refreshUserPool();
+      if (cycleIdleRef.current) {
+        // Cycle stopped because pools were empty — kick it off now that content exists
+        const t = setTimeout(() => { if (cycleIdleRef.current) cycleRef.current?.(); }, 400);
+        return () => clearTimeout(t);
+      }
+    }
   }, [playersLen, drawingsCount, refreshUserPool]);
 
   // Refresh general pool when stats-relevant values change

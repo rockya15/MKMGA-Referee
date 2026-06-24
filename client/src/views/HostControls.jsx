@@ -544,7 +544,7 @@ function HostControls({ gameState, socket }) {
               handleStartPositionAssignment(false);
             }}
           >
-            {allReady ? 'Spin the Wheel →' : 'Force Start Position Assignment'}
+            {allReady ? 'Go to Position Assignment →' : 'Force Go to Position Assignment'}
           </button>
 
           {pendingResurrectionPromptOpen && (
@@ -646,6 +646,20 @@ function HostControls({ gameState, socket }) {
           <div style={styles.hint}>Result: <strong>{gameState.raceResult}</strong></div>
           <button style={styles.btn} onClick={() => handleAction('next-race')}>
             Next Race →
+          </button>
+        </div>
+      )}
+
+      {/* ── ELIMINATION SCREEN ── */}
+      {currentStage === 'ELIMINATION_SCREEN' && (
+        <div style={styles.section}>
+          <div style={styles.sectionTitle}>Elimination Screen</div>
+          <div style={styles.hint}>
+            {(gameState.newlyEliminatedIds ?? []).length} player(s) eliminated this round.
+            Wait for skull animations to finish, then continue.
+          </div>
+          <button style={styles.btn} onClick={() => handleAction('advance-from-elimination')}>
+            Continue to Pre-Bet →
           </button>
         </div>
       )}
@@ -926,6 +940,18 @@ function HostControls({ gameState, socket }) {
         <div style={styles.hint}>Save a permanent copy of the current race/game state to a new timestamped folder.</div>
         <button style={styles.btn} onClick={handleSaveRaceData}>
           Save Current Race Data
+        </button>
+      </div>
+
+      {/* ── FOOTER ── */}
+      <div style={styles.section}>
+        <div style={styles.sectionTitle}>Footer Display</div>
+        <div style={styles.hint}>Clear old player data from the footer ticker on the host screen.</div>
+        <button
+          style={styles.btn}
+          onClick={() => handleAction('clear-footer')}
+        >
+          Clear Footer Content
         </button>
       </div>
 

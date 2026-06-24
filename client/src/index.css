@@ -375,3 +375,18 @@ code {
 .pos-avatar-drop {
   animation: pos-avatar-drop 0.8s linear forwards;
 }
+
+@keyframes skull-drop {
+  0%   { transform: translateX(-50%) translateY(-200px) scale(0.7); opacity: 0; }
+  60%  { transform: translateX(-50%) translateY(20px) scale(1.06); opacity: 1; }
+  75%  { transform: translateX(-50%) translateY(-10px) scale(0.97); }
+  90%  { transform: translateX(-50%) translateY(5px) scale(1.02); }
+  100% { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; }
+}
+
+@keyframes elim-label-pop {
+  0%   { transform: scale(0.4) translateY(8px); opacity: 0; }
+  65%  { transform: scale(1.18) translateY(-3px); opacity: 1; }
+  85%  { transform: scale(0.95) translateY(1px); }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}

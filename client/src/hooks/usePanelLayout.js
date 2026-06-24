@@ -18,9 +18,10 @@ import { useMemo } from 'react';
 
 // Feature-level size hints for the active element panel
 export const FEATURE_CONFIGS = {
-  wheel:  { flexWeight: 1.5, minWidth: 500 },
-  vote:   { flexWeight: 0.85, minWidth: 380 },
-  payout: { flexWeight: 1.0, minWidth: 420 },
+  wheel:       { flexWeight: 1.5, minWidth: 500 },
+  vote:        { flexWeight: 0.85, minWidth: 380 },
+  payout:      { flexWeight: 1.0, minWidth: 420 },
+  elimination: { flexWeight: 1.2, minWidth: 480 },
 };
 
 const DEFAULT_DURATION = 0.6;

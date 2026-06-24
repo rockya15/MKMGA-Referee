@@ -331,7 +331,7 @@ function scheduleBotPositionSpinFallback() {
     if (gameState.currentStage !== STAGES.POSITION_ASSIGNMENT) return;
     if (pendingPositionAssignmentFinalize || expectedCascadeSpinToken) return;
     const draft = gameState.positionDraft;
-    if (!draft || draft.cascadeChain) return;
+    if (!draft || draft.cascadeChain || draft.freeChoice) return;
     const pickerId = gameState.wheelOrder?.[draft.currentPlayerIndex];
     const picker = gameState.getPlayerById(pickerId);
     if (!isBotPlayer(picker)) return;
@@ -580,6 +580,7 @@ function maybeStartPositionTimer() {
   if (gameState.currentStage !== STAGES.POSITION_ASSIGNMENT) return;
   const draft = gameState.positionDraft;
   if (!draft) return;
+  if (draft.freeChoice) return;
   if (draft.cascadeChain) {
     timerManager.clearTimer();
     return;
@@ -607,7 +608,8 @@ function queueBotAutoAction() {
     return;
   }
 
-  const delay = getBotActionDelayMs();
+  const isFreeChoicePick = gameState.currentStage === STAGES.POSITION_ASSIGNMENT && gameState.positionDraft?.freeChoice;
+  const delay = isFreeChoicePick ? 0 : getBotActionDelayMs();
   botActionTimeout = setTimeout(() => {
     botActionTimeout = null;
     let acted = runOneBotAction();
@@ -615,6 +617,8 @@ function queueBotAutoAction() {
       // Pre-bet and vote sessions should share one delay and resolve in one burst.
       let burstGuard = 0;
       while (burstGuard < 128) {
+        // Stop burst if the phase that triggered it has ended (e.g. freeChoice finalized into BETTING)
+        if (!isBurstBotPhaseActive()) break;
         const progressed = runOneBotAction();
         if (!progressed) break;
         acted = true;
@@ -663,13 +667,18 @@ function hasPendingBotTurnAction() {
   }
 
   if (gameState.currentStage === STAGES.POSITION_ASSIGNMENT) {
-    const chain = gameState.positionDraft?.cascadeChain;
+    const draft = gameState.positionDraft;
+    const chain = draft?.cascadeChain;
     if (chain?.promptReady) {
       const displaced = gameState.getPlayerById(chain.pendingDisplacedId);
       return isBotPlayer(displaced);
     }
     if (!chain) {
-      const draft = gameState.positionDraft;
+      if (draft?.freeChoice) {
+        return gameState.players.some((p) =>
+          p.paidEntry && isBotPlayer(p) && (draft.remainingByPlayer[p.id] ?? 0) > 0
+        );
+      }
       const pickerId = gameState.wheelOrder?.[draft?.currentPlayerIndex];
       const picker = gameState.getPlayerById(pickerId);
       return isBotPlayer(picker);
@@ -691,7 +700,9 @@ function shouldRetryBotAutoAction() {
 
 function isBurstBotPhaseActive() {
   if (hasPendingBotVoteAction()) return true;
-  return gameState.currentStage === STAGES.PRE_BET;
+  if (gameState.currentStage === STAGES.PRE_BET) return true;
+  if (gameState.currentStage === STAGES.POSITION_ASSIGNMENT && gameState.positionDraft?.freeChoice) return true;
+  return false;
 }
 
 function getBotActionDelayMs() {
@@ -989,6 +1000,21 @@ function runOneBotAction() {
 
     if (!chain) {
       const draft = gameState.positionDraft;
+
+      // Free-choice mode: pick for any unpicked bot, no timer required
+      if (draft?.freeChoice) {
+        const botWaiting = gameState.players.find((p) =>
+          p.paidEntry && isBotPlayer(p) && (draft.remainingByPlayer[p.id] ?? 0) > 0
+        );
+        if (!botWaiting) return false;
+        const position = pickBotPosition(draft);
+        if (!position) return false;
+        const result = gameState.assignPositionWithOptions(botWaiting.id, position, { cascade: false });
+        if (result.error) return false;
+        if (result.complete) finalizePositionAssignmentPhase();
+        return true;
+      }
+
       const pickerId = gameState.wheelOrder?.[draft?.currentPlayerIndex];
       const picker = gameState.getPlayerById(pickerId);
       if (!isBotPlayer(picker)) return false;
@@ -1490,16 +1516,14 @@ io.on('connection', (socket) => {
         finalizePositionAssignmentPhase();
       }
     } else {
-      // Check if the same player still has more picks remaining
-      const draft = gameState.positionDraft;
-      const currentPickerId = gameState.wheelOrder?.[draft?.currentPlayerIndex];
-      if (currentPickerId === playerId) {
-        // Still their turn — extend the timer by 10 seconds
-        timerManager.addTime(10);
-      } else {
-        // Turn passed to next player — kill the old timer so it doesn't fire
-        // while the wheel is spinning. Timer restarts after 'spin-complete'.
-        timerManager.clearTimer();
+      if (!gameState.positionDraft?.freeChoice) {
+        const draft = gameState.positionDraft;
+        const currentPickerId = gameState.wheelOrder?.[draft?.currentPlayerIndex];
+        if (currentPickerId === playerId) {
+          timerManager.addTime(10);
+        } else {
+          timerManager.clearTimer();
+        }
       }
       emitGameState();
     }
@@ -1712,7 +1736,11 @@ io.on('connection', (socket) => {
             bettingEngine.initializeBetting();
           }
         } else if (result.success) {
-          // Timer starts when HostView emits 'spin-complete' after the wheel animation finishes
+          if (gameState.positionDraft?.freeChoice) {
+            // No wheel animation in free-choice mode — kick off bot picks immediately
+            queueBotAutoAction();
+          }
+          // Otherwise timer starts when HostView emits 'spin-complete' after the wheel animation
         }
         break;
       case 'next-race':
@@ -1721,6 +1749,9 @@ io.on('connection', (socket) => {
         clearCascadeCompletionTimeout();
         clearBotPositionSpinFallback();
         result = gameState.nextRace();
+        break;
+      case 'advance-from-elimination':
+        result = gameState.advanceFromEliminationScreen();
         break;
       case 'record-race-result':
         result = settleRaceAndPersistSummary(data.placement);
@@ -1777,6 +1808,10 @@ io.on('connection', (socket) => {
         emitGameState();
         break;
       }
+      case 'clear-footer':
+        io.emit('clear-footer');
+        result = { success: true };
+        break;
       case 'debug-add-bots':
         result = addDebugBots(data.count, data.startingCash);
         break;
@@ -1902,6 +1937,11 @@ setInterval(() => {
 
   const draft = gameState.positionDraft;
   if (!draft) {
+    positionTimerMissingSince = 0;
+    return;
+  }
+
+  if (draft.freeChoice) {
     positionTimerMissingSince = 0;
     return;
   }

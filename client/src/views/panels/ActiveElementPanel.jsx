@@ -363,12 +363,65 @@ function PayoutElement({ winners, raceResult, getFavoriteColor, payoutTotalAmoun
   );
 }
 
+// ---------- EliminationScreen ----------
+
+function EliminationScreen({ eliminatedPlayers, suppressedEliminatedIds, onSkullLanded, getFavoriteColor }) {
+  if (!eliminatedPlayers || eliminatedPlayers.length === 0) return null;
+
+  const SKULL_DURATION_MS = 700;
+  const SKULL_STAGGER_MS  = 800;
+  const LABEL_OFFSET_MS   = 900; // relative to skull start
+
+  return (
+    <div style={s.elimScreen}>
+      <div style={s.elimTitle}>ELIMINATED</div>
+      <div style={s.elimPlayersRow}>
+        {eliminatedPlayers.map((player, idx) => {
+          const skullDelay  = idx * SKULL_STAGGER_MS;
+          const labelDelay  = skullDelay + LABEL_OFFSET_MS;
+          return (
+            <div key={player.id} style={s.elimPlayerCard}>
+              {/* ELIMINATED label — pops in after skull lands */}
+              <div
+                style={{
+                  ...s.elimLabel,
+                  animationDelay: `${labelDelay}ms`,
+                }}
+              >
+                ELIMINATED
+              </div>
+
+              {/* Avatar */}
+              <Avatar player={player} size={72} borderWidth={3} getFavoriteColor={getFavoriteColor} />
+
+              {/* Skull gif — drops from above */}
+              <img
+                src="/assets/death.gif"
+                alt="skull"
+                className="skull-drop-anim"
+                style={{
+                  ...s.elimSkull,
+                  animationDelay: `${skullDelay}ms`,
+                  animationDuration: `${SKULL_DURATION_MS}ms`,
+                }}
+                onAnimationEnd={() => onSkullLanded?.(player.id)}
+              />
+
+              <div style={s.elimPlayerName}>{player.displayName || player.realName}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ---------- Main component ----------
 
 /**
  * ActiveElementPanel
  *
- * Renders the correct sub-feature (vote | wheel | payout) based on elementType.
+ * Renders the correct sub-feature (vote | wheel | payout | elimination) based on elementType.
  * Reads PanelProgressContext to fade content in once the panel is sufficiently visible.
  *
  * Props: see HostView for shape
@@ -392,6 +445,10 @@ export default function ActiveElementPanel({
   payoutWinners,
   payoutTotalAmount,
   onPayoutEffectDone,
+  // elimination state
+  eliminatedPlayers,
+  suppressedEliminatedIds,
+  onSkullLanded,
   getFavoriteColor,
 }) {
   const { progress } = usePanelProgress();
@@ -428,6 +485,53 @@ export default function ActiveElementPanel({
           <PayoutElement winners={payoutWinners} raceResult={raceResult} getFavoriteColor={getFavoriteColor} payoutTotalAmount={payoutTotalAmount} onDone={onPayoutEffectDone} />
         </div>
       )}
+
+      {elementType === 'elimination' && (
+        <div style={s.centeredWrap}>
+          <EliminationScreen
+            eliminatedPlayers={eliminatedPlayers}
+            suppressedEliminatedIds={suppressedEliminatedIds}
+            onSkullLanded={onSkullLanded}
+            getFavoriteColor={getFavoriteColor}
+          />
+        </div>
+      )}
+
+      {elementType === 'free-choice' && (() => {
+        const draft = positionDraft;
+        const remaining = draft?.remainingByPlayer ?? {};
+        const wheelOrder = gameState?.wheelOrder ?? [];
+        const picked = [...players.filter((p) => p.paidEntry && (remaining[p.id] ?? 1) === 0)]
+          .sort((a, b) => {
+            const ai = wheelOrder.indexOf(a.id);
+            const bi = wheelOrder.indexOf(b.id);
+            return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+          });
+        const waiting = players.filter((p) => p.paidEntry && (remaining[p.id] ?? 1) > 0);
+        const total = picked.length + waiting.length;
+        return (
+          <div style={s.freeChoicePanel}>
+            <div style={s.freeChoiceTitle}>POSITION SELECTION</div>
+            <div style={s.freeChoiceSubtitle}>{picked.length} / {total} players have chosen</div>
+            <div style={s.freeChoiceGrid}>
+              {picked.map((p) => (
+                <div key={p.id} style={s.freeChoiceRow}>
+                  <Avatar player={p} size={32} getFavoriteColor={getFavoriteColor} />
+                  <span style={s.freeChoiceName}>{getFirstName(p.displayName)}</span>
+                  <span style={s.freeChoicePos}>{p.positions?.[p.positions.length - 1] ?? '?'}</span>
+                </div>
+              ))}
+              {waiting.map((p) => (
+                <div key={p.id} style={{ ...s.freeChoiceRow, opacity: 0.4 }}>
+                  <Avatar player={p} size={32} getFavoriteColor={getFavoriteColor} />
+                  <span style={s.freeChoiceName}>{getFirstName(p.displayName)}</span>
+                  <span style={{ ...s.freeChoicePos, color: '#555' }}>…</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {elementType === 'wheel' && (
         <div style={s.wheelPanel}>
@@ -742,5 +846,67 @@ const s = {
   payoutChartLabel: {
     fontSize: 11, fontWeight: 'bold', color: '#aaa',
     textTransform: 'uppercase', letterSpacing: 0.5,
+  },
+  freeChoicePanel: {
+    display: 'flex', flexDirection: 'column', alignItems: 'center',
+    padding: '32px 24px', gap: 16, width: '100%', boxSizing: 'border-box',
+  },
+  freeChoiceTitle: {
+    fontSize: 22, fontWeight: 800, color: '#f0c040', letterSpacing: 3, textTransform: 'uppercase',
+  },
+  freeChoiceSubtitle: {
+    fontSize: 15, color: '#aaa', marginBottom: 8,
+  },
+  freeChoiceGrid: {
+    display: 'flex', flexDirection: 'column', gap: 8, width: '100%', maxWidth: 380,
+  },
+  freeChoiceRow: {
+    display: 'flex', alignItems: 'center', gap: 10,
+    background: '#1a1f2a', borderRadius: 8, padding: '8px 14px',
+  },
+  freeChoiceName: {
+    flex: 1, fontSize: 14, fontWeight: 600, color: '#ddd', overflow: 'hidden',
+    textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  freeChoicePos: {
+    fontSize: 14, fontWeight: 800, color: '#2ecc71', minWidth: 36, textAlign: 'right',
+  },
+  elimScreen: {
+    display: 'flex', flexDirection: 'column', alignItems: 'center',
+    gap: 32, padding: '36px 24px', width: '100%', boxSizing: 'border-box',
+  },
+  elimTitle: {
+    fontSize: 36, fontWeight: 900, color: '#e74c3c', letterSpacing: 6,
+    textTransform: 'uppercase', textShadow: '0 0 28px rgba(231,76,60,0.7)',
+  },
+  elimPlayersRow: {
+    display: 'flex', flexWrap: 'wrap', gap: 40, justifyContent: 'center', alignItems: 'flex-end',
+  },
+  elimPlayerCard: {
+    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+    position: 'relative',
+  },
+  elimLabel: {
+    fontSize: 11, fontWeight: 900, color: '#e74c3c', letterSpacing: 3,
+    textTransform: 'uppercase', textShadow: '0 0 10px rgba(231,76,60,0.6)',
+    animationName: 'elim-label-pop',
+    animationDuration: '0.4s',
+    animationTimingFunction: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+    animationFillMode: 'both',
+  },
+  elimSkull: {
+    position: 'absolute',
+    top: 20,
+    left: '50%',
+    width: 72, height: 72,
+    animationName: 'skull-drop',
+    animationTimingFunction: 'cubic-bezier(0.34, 1.2, 0.64, 1)',
+    animationFillMode: 'both',
+    pointerEvents: 'none',
+    zIndex: 10,
+  },
+  elimPlayerName: {
+    fontSize: 13, fontWeight: 600, color: '#ccc', textAlign: 'center',
+    maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
 };
