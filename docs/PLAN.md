@@ -588,7 +588,13 @@ MKMGA Referee/
 │   ├── main.py                 # Entry point: connects to server, orchestrates detection
 │   └── requirements.txt        # Sidecar Python dependencies
 ├── start.bat                   # Single launch script: server + sidecar + Cloudflare Tunnel
-├── PLAN.md                     # This file
+├── start.ps1                   # PowerShell script launched by start.bat
+├── docs/
+│   ├── PLAN.md                 # This file
+│   ├── MKMGA_OFFICIAL_RULESET.md
+│   └── user commands.md
+├── tools/
+│   └── cloudflared-installer.msi
 └── README.md                   # Setup guide (to be written)
 ```
 

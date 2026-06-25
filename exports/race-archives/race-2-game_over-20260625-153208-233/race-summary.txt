@@ -1,0 +1,35 @@
+MKMGA RACE SUMMARY
+Saved: 2026-06-25T19:32:08.234Z
+Race Number: 2
+Result: N/A
+Stage: GAME_OVER
+Pot Remaining: $11.25
+
+Winners (0): None
+
+Players (sorted by balance):
+1. a | balance=$77.00 | start=$15.00 | net=+62.00 | in=$0.00 | positions=- | DC
+2. Pam | balance=$76.50 | start=$15.00 | net=+61.50 | in=$0.50 | positions=- | PAID
+3. Hank | balance=$14.50 | start=$15.00 | net=-0.50 | in=$0.50 | positions=- | PAID
+4. Buttercup | balance=$14.50 | start=$15.00 | net=-0.50 | in=$0.50 | positions=- | PAID
+5. Larry | balance=$14.50 | start=$15.00 | net=-0.50 | in=$0.50 | positions=- | PAID
+6. Linda | balance=$14.50 | start=$15.00 | net=-0.50 | in=$0.50 | positions=- | PAID
+7. Dale | balance=$14.50 | start=$15.00 | net=-0.50 | in=$0.50 | positions=- | PAID
+8. Mike | balance=$14.50 | start=$15.00 | net=-0.50 | in=$0.50 | positions=- | PAID
+9. Karen | balance=$14.25 | start=$15.00 | net=-0.75 | in=$0.50 | positions=- | PAID
+10. Don Kreig | balance=$7.25 | start=$15.00 | net=-7.75 | in=$0.00 | positions=- | SKIPPED
+11. Bogard | balance=$7.25 | start=$15.00 | net=-7.75 | in=$0.00 | positions=- | SKIPPED
+12. Patty | balance=$6.75 | start=$15.00 | net=-8.25 | in=$0.50 | positions=- | PAID
+13. Debbie | balance=$6.75 | start=$15.00 | net=-8.25 | in=$0.50 | positions=- | PAID
+14. Phil | balance=$6.75 | start=$15.00 | net=-8.25 | in=$0.50 | positions=- | PAID
+15. Barry | balance=$6.75 | start=$15.00 | net=-8.25 | in=$0.50 | positions=- | PAID
+16. Dennis | balance=$6.75 | start=$15.00 | net=-8.25 | in=$0.50 | positions=- | PAID
+17. Vicky | balance=$6.75 | start=$15.00 | net=-8.25 | in=$0.50 | positions=- | PAID
+18. berezaa | balance=$6.75 | start=$15.00 | net=-8.25 | in=$0.50 | positions=- | PAID
+19. Donna | balance=$6.75 | start=$15.00 | net=-8.25 | in=$0.50 | positions=- | PAID
+20. Becky | balance=$6.75 | start=$15.00 | net=-8.25 | in=$0.50 | positions=- | PAID
+21. Peggy | balance=$6.75 | start=$15.00 | net=-8.25 | in=$0.50 | positions=- | PAID
+22. Timmy | balance=$6.75 | start=$15.00 | net=-8.25 | in=$0.50 | positions=- | PAID
+23. Cindy | balance=$6.75 | start=$15.00 | net=-8.25 | in=$0.50 | positions=- | PAID
+24. Chad | balance=$6.75 | start=$15.00 | net=-8.25 | in=$0.50 | positions=- | PAID
+25. Carol | balance=$6.75 | start=$15.00 | net=-8.25 | in=$0.50 | positions=- | PAID

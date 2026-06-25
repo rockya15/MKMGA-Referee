@@ -1,0 +1,30 @@
+{
+  "currentStage": "LOBBY",
+  "players": [],
+  "hostSettings": {
+    "maxCashCap": null,
+    "lobbyOpen": false,
+    "resurrectionBaseCash": 1
+  },
+  "raceNumber": 1,
+  "pot": 0,
+  "cascadeSpinsThisRound": 0,
+  "wheelOrder": [],
+  "entryFee": 0.25,
+  "positionDraft": null,
+  "bettingState": {
+    "currentBet": 0,
+    "playersInRound": [],
+    "actionQueue": [],
+    "betCap": 0,
+    "raiseLockedPlayers": {},
+    "initialBetCap": 0,
+    "lastBetActions": {},
+    "lastRaiserId": null
+  },
+  "raceResult": null,
+  "preservePositionsNextRace": false,
+  "newlyEliminatedIds": [],
+  "kingId": null,
+  "publicJoinUrl": "https://zones-safari-optics-landscape.trycloudflare.com"
+}

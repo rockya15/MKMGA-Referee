@@ -505,3 +505,75 @@ WITNESS (THE HOST):
 This document is issued by the MKMGA FUN ENFORCEMENT AGENCY. It is binding in the sense that everyone agreed to it. It is not binding in any other sense. The MKMGA FUN ENFORCEMENT AGENCY is not responsible for financial losses incurred during MKMGA, including but not limited to: bad luck, skill issues, The Wheel, DNF, or stream snipers.
 
 MKMGA-001 · MKMGA FUN ENFORCEMENT AGENCY · DO NOT FOLD (this document) · THE POT MAY NOT BE TOUCHED
+
+---
+
+AMENDMENT A — OPERATIONAL CLARIFICATIONS AND RULE REVISIONS
+
+Document Reference No.: MKMGA-003-A
+Supersedes: Applicable subsections of MKMGA-003 as identified below
+Status: BINDING UPON SIGNATURE
+
+This Amendment is appended to and made part of MKMGA Document Reference No. MKMGA-003 in its entirety. All articles, sections, and subclauses of the original Agreement remain in full force except where expressly modified herein. In the event of any conflict between this Amendment and the body of the original Agreement, this Amendment shall control.
+
+─────────────────────────────────────────────────────────────
+
+AMENDMENT A.01 — FREE-CHOICE POSITION SELECTION
+
+(Modifies: Article V, Section 5.02 — Operation of The Wheel; and Article V, Section 5.04(a) — More Than Thirteen Paying Participants. Also see Article VI, Section 6.01 — Commencement of Betting.)
+
+Section 5.02 operates as written when the number of paying participants is thirteen (13) or fewer. However, when the number of paying participants exceeds thirteen (13) — the condition governed by Section 5.04(a) — The Wheel shall not be used for position assignment. The following Free-Choice Protocol applies instead:
+
+(a) Upon commencement of the Position Assignment phase with more than thirteen (13) paying participants, all paying participants may select their desired position at any time of their own choosing. There is no waiting for The Wheel. There is no spin. The Wheel watches silently from the sidelines. It does not interfere.
+
+(b) The official Betting Order for the subsequent Betting Phase shall be determined not by Wheel spin sequence, but by the order in which participants submit their position selections. The first participant to choose is the first to bet. The last participant to choose is the last to bet. This replaces the Wheel Order provision referenced in Section 6.01 for this scenario only.
+
+(c) In all other respects, Section 5.04(a) remains in effect: positions are non-exclusive, multiple participants may hold the same position, shared winning positions split the pot equally, and DNF is freely selectable without cascade.
+
+─────────────────────────────────────────────────────────────
+
+AMENDMENT A.02 — REFUSAL TO CONTINUE CONSTITUTES ELIMINATION
+
+(Modifies: Article VIII, Section 8.04(b) — Voluntary Withdrawal.)
+
+Section 8.04(b) identifies Voluntary Withdrawal as a valid edge-case elimination condition. This Amendment clarifies and extends that provision as follows:
+
+At any point between races when participants are asked, formally or informally, whether they wish to continue play, any participant who does not affirmatively agree to continue — whether by explicit refusal, silence, physical departure, non-responsiveness, or a general vibe of not being in it anymore — shall be deemed to have voluntarily withdrawn from play under Section 8.04(b) and shall be immediately and irrevocably eliminated.
+
+A participant's failure to engage is itself a decision. The game recognizes it as such. The game has seen it before. The game is not surprised.
+
+Any remaining balance held by a participant eliminated under this provision is immediately forfeited to The Pot in accordance with the remainder of Section 8.04. There are no grace periods, no second chances, and no retroactive opt-ins. If you needed a moment, you should have said so before it was your moment.
+
+─────────────────────────────────────────────────────────────
+
+AMENDMENT A.03 — REVISED BET CAP FORMULA
+
+(Modifies: Article VI, Section 6.03 — The Bet Cap.)
+
+Section 6.03 is hereby amended in its entirety with respect to how the Bet Cap is calculated. The Bet Cap shall no longer equal the full remaining balance of the lowest-funded paying participant. Instead, the following formula and reset conditions apply:
+
+(a) Primary Formula — The Bet Cap shall equal one half (½) of the remaining balance of the lowest-funded paying participant at the start of the Betting Phase, calculated after the Entry Fee has been paid but before any bets have been placed. If this calculation produces a result that is not a multiple of $0.25, it shall be rounded down to the nearest quarter. The game does not deal in fractions of quarters. No one does.
+
+(b) Zero-Balance Reset — In the event that the lowest-funded paying participant has a remaining balance of exactly $0.00 at the start of the Betting Phase — meaning their entire balance was consumed by the Entry Fee and they enter the Betting Phase All In — the Bet Cap shall be recalculated using the remaining balance of the second-lowest-funded paying participant, applying the same one-half formula described in subsection (a) above.
+
+(c) All other mechanics of Section 6.03 remain in effect: the Raise option is removed once the cumulative bet reaches the Cap, the Cap is recalculated if a participant folds, and participants who have already matched the current bet are not re-queued due to a Cap change.
+
+─────────────────────────────────────────────────────────────
+
+AMENDMENT A — PARTICIPANT ACKNOWLEDGMENT
+
+By signing below, the participant confirms they have read, understood, and accept the three provisions of Amendment A as modifications to the original Agreement.
+
+- [ ] I understand that when more than 13 players pay, I choose my position whenever I want, and my betting order is determined by when I choose.
+- [ ] I understand that not agreeing to continue means I am eliminated immediately.
+- [ ] I understand that the Bet Cap is now half of the lowest player's remaining balance, and resets to half of the second-lowest if the lowest player is at $0.00.
+
+PARTICIPANT FULL LEGAL SIGNATURE: 
+
+DATE: 
+
+WITNESS (THE HOST): 
+
+─────────────────────────────────────────────────────────────
+
+MKMGA-003-A · MKMGA FUN ENFORCEMENT AGENCY · THIS AMENDMENT IS REAL · THE POT MAY STILL NOT BE TOUCHED

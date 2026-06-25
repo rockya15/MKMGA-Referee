@@ -69,33 +69,15 @@ function floodFill(canvas, startX, startY, fillHex) {
 
 const DRAWING_PROMPTS = [
   'Draw a monkey',
-  'Draw a happy family',
   'Draw a reddit mod',
   'Draw your ex',
-  'Draw a self-portrait',
-  'Draw your spirit animal',
   'Draw XQC',
   'Draw what $5 looks like',
   'Draw a politician doing the right thing',
   'Draw a pedo',
-  'Draw your biggest fear',
-  'Draw a French person',
-  'Draw the average EVADE mod',
-  'Draw a fish with ambitions',
   'Draw the person next to you',
-  'Draw a raccoon in a tuxedo',
-  'Draw someone about to make a terrible decision',
-  'Draw a very disappointing trophy',
-  'Draw the king of MKMGA',
   'Draw the average Michigan woman',
-  "Draw what's happening in the Middle East",
   'Draw someone who definitely cheated',
-  'Draw the GOAT',
-  'Draw a disappointed parent',
-  'Draw a gamer in their natural habitat',
-  'Draw capitalism',
-  'Draw someone who has never lost a bet',
-  'Draw your doctor when you describe your symptoms',
 ];
 
 const CANVAS_SIZE = 320;
@@ -414,42 +396,15 @@ export default function DrawingPrompt({ onDone, onBack }) {
   );
 }
 
-// Simple SVG icon labels for the tool buttons (right column)
-const UNDO_ICON = (
-  <svg viewBox="0 0 24 24" width="min(5.5vmin, 36px)" height="min(5.5vmin, 36px)" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M3 10h10a5 5 0 0 1 0 10H7"/>
-    <polyline points="3 10 7 6 3 6"/>
-  </svg>
-);
+const ARROW_STYLE = { fontSize: 'min(5.5vmin, 34px)', color: '#fff', lineHeight: 1 };
+const UNDO_ICON = <span style={ARROW_STYLE}>←</span>;
+const REDO_ICON = <span style={ARROW_STYLE}>→</span>;
 
-const REDO_ICON = (
-  <svg viewBox="0 0 24 24" width="min(5.5vmin, 36px)" height="min(5.5vmin, 36px)" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M21 10H11a5 5 0 0 0 0 10h6"/>
-    <polyline points="21 10 17 6 21 6"/>
-  </svg>
-);
-
+const TOOL_IMG_STYLE = { width: 'min(6vmin, 42px)', height: 'min(6vmin, 42px)', filter: 'invert(1)', display: 'block' };
 const TOOL_ICONS = {
-  eraser: (
-    <svg viewBox="0 0 24 24" width="min(5.5vmin, 36px)" height="min(5.5vmin, 36px)" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M20 20H7L3 16l10-10 7 7-3.5 3.5"/>
-      <path d="M6.5 17.5l4-4"/>
-    </svg>
-  ),
-  bucket: (
-    <svg viewBox="0 0 24 24" width="min(5.5vmin, 36px)" height="min(5.5vmin, 36px)" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M19 11c0 5-3.5 9-7.5 9S4 16 4 11l7.5-8 7.5 8z"/>
-      <line x1="4" y1="11" x2="20" y2="11"/>
-      <circle cx="20" cy="18" r="2" fill="#fff" stroke="none"/>
-    </svg>
-  ),
-  brush: (
-    <svg viewBox="0 0 24 24" width="min(5.5vmin, 36px)" height="min(5.5vmin, 36px)" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 17c0 2.5 2 3 3 3 1.5 0 3-1 3-3v-1H3v1z"/>
-      <path d="M9 16V5l3-2 3 2v11"/>
-      <line x1="9" y1="12" x2="15" y2="12"/>
-    </svg>
-  ),
+  eraser: <img src="/assets/Eraser.webp"       alt="Eraser" style={TOOL_IMG_STYLE} />,
+  bucket: <img src="/assets/Paint Bucket.png"  alt="Bucket" style={TOOL_IMG_STYLE} />,
+  brush:  <img src="/assets/Paint Brush.png"   alt="Brush"  style={TOOL_IMG_STYLE} />,
 };
 
 const s = {

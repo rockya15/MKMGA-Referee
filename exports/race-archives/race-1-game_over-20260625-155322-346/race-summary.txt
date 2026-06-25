@@ -1,0 +1,14 @@
+MKMGA RACE SUMMARY
+Saved: 2026-06-25T19:53:22.347Z
+Race Number: 1
+Result: N/A
+Stage: GAME_OVER
+Pot Remaining: $0.00
+
+Winners (0): None
+
+Players (sorted by balance):
+1. Timmy | balance=$15.00 | start=$15.00 | net=+0.00 | in=$0.00 | positions=-
+2. berezaa | balance=$15.00 | start=$15.00 | net=+0.00 | in=$0.00 | positions=-
+3. Phil | balance=$15.00 | start=$15.00 | net=+0.00 | in=$0.00 | positions=-
+4. Luanne | balance=$15.00 | start=$15.00 | net=+0.00 | in=$0.00 | positions=-

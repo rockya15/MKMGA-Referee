@@ -63,7 +63,8 @@ function FooterDisplay({ players, visible, raceNumber = 1, cascadeSpinsThisRound
   useEffect(() => {
     if (currentItem === null) {
       setItemVisible(false);
-    } else if (currentItem.id !== displayItem?.id) {
+    } else if (currentItem.id !== displayItem?.id || !itemVisible) {
+      // Re-show even on same ID — item may have faded out and is looping back
       clearTimeout(transitionTimerRef.current);
       transitionTimerRef.current = setTimeout(() => {
         setDisplayItem(currentItem);
@@ -74,7 +75,7 @@ function FooterDisplay({ players, visible, raceNumber = 1, cascadeSpinsThisRound
   }, [currentItem]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Render ───────────────────────────────────────────────────────────────
-  const effectiveVisible = visible || (isLobby && showWaiting);
+  const effectiveVisible = visible;
   const accent     = showWaiting ? '#555' : (TYPE_ACCENT[displayItem?.type] ?? '#f0c040');
   const badgeLabel = showWaiting ? null : getBadgeLabel(displayItem);
   const WAITING_HEIGHT = 72;

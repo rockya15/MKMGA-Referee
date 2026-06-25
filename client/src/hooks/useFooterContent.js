@@ -64,12 +64,14 @@ function buildGeneralItems(players, raceNumber, cascadeSpinsThisRound) {
   if (active.length >= 2) {
     const byBal = [...active].sort((a, b) => b.balance - a.balance);
 
-    items.push({
-      id: 'stat-leader',
-      type: 'stat',
-      duration: DISPLAY_DURATION_MS,
-      data: { label: 'LEADING THE PACK', player: byBal[0], value: byBal[0].balance, icon: '👑' },
-    });
+    if (byBal[0].balance > byBal[1].balance) {
+      items.push({
+        id: 'stat-leader',
+        type: 'stat',
+        duration: DISPLAY_DURATION_MS,
+        data: { label: 'LEADING THE PACK', player: byBal[0], value: byBal[0].balance, icon: '👑' },
+      });
+    }
     const lowestPlayer = byBal[byBal.length - 1];
     if (lowestPlayer.balance === 0) {
       items.push({
@@ -154,7 +156,9 @@ export function useFooterContent({ players, raceNumber = 1, cascadeSpinsThisRoun
   const generalSinceUserRef = useRef(0);
 
   // Type of the last item shown — used to prevent back-to-back stats
-  const lastItemTypeRef = useRef(null);
+  const lastItemTypeRef    = useRef(null);
+  // ID of the last user item shown — used to prevent same item repeating at cycle boundary
+  const lastShownUserIdRef = useRef(null);
 
   // Priority queue for event-driven items
   const priorityRef = useRef([]);
@@ -200,6 +204,7 @@ export function useFooterContent({ players, raceNumber = 1, cascadeSpinsThisRoun
       userShownIdsRef.current.add(item.id);
       generalSinceUserRef.current = 0;
       lastItemTypeRef.current = item.type;
+      lastShownUserIdRef.current = item.id;
       // If user pool just exhausted, clear shown set so the next cycle can start fresh
       if (userPoolRef.current.length === 0) {
         userShownIdsRef.current.clear();
@@ -213,11 +218,21 @@ export function useFooterContent({ players, raceNumber = 1, cascadeSpinsThisRoun
     }
     // No general content available (e.g. lobby) — fall back to UGC directly
     if (generalPoolRef.current.length === 0) {
+      // Pool may be empty because it just completed a full cycle (shown IDs were cleared).
+      // Rebuild now so we can loop the same content rather than going idle.
+      if (userPoolRef.current.length === 0) {
+        refreshUserPool();
+        // Don't repeat the item that was just shown at the end of the previous cycle
+        if (userPoolRef.current.length > 1 && userPoolRef.current[0]?.id === lastShownUserIdRef.current) {
+          userPoolRef.current.push(userPoolRef.current.shift());
+        }
+      }
       if (userPoolRef.current.length > 0) {
         const item = userPoolRef.current.shift();
         userShownIdsRef.current.add(item.id);
         generalSinceUserRef.current = 0;
         lastItemTypeRef.current = item.type;
+        lastShownUserIdRef.current = item.id;
         if (userPoolRef.current.length === 0) userShownIdsRef.current.clear();
         return item;
       }
@@ -239,7 +254,7 @@ export function useFooterContent({ players, raceNumber = 1, cascadeSpinsThisRoun
     lastItemTypeRef.current = item.type;
     generalSinceUserRef.current++;
     return item;
-  }, [refreshGeneralPool]);
+  }, [refreshGeneralPool, refreshUserPool]);
 
   const cycle = useCallback(() => {
     clearTimeout(displayTimerRef.current);

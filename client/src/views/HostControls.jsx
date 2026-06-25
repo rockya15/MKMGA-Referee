@@ -12,6 +12,7 @@ function PlayerCard({ p, gameState, socket, onError, onSuccess, resurrectionBase
   const [balanceInput, setBalanceInput] = useState('');
   const [selectedPositions, setSelectedPositions] = useState(p.positions ?? []);
   const [confirmKick, setConfirmKick] = useState(false);
+  const [confirmDeclareKing, setConfirmDeclareKing] = useState(false);
 
   // Keep local position mirror in sync if game state changes while not editing
   useEffect(() => { setSelectedPositions(p.positions ?? []); }, [p.positions]);
@@ -74,7 +75,7 @@ function PlayerCard({ p, gameState, socket, onError, onSuccess, resurrectionBase
         </div>
         <button
           style={styles.expandBtn}
-          onClick={() => { setExpanded((v) => !v); setConfirmKick(false); }}
+          onClick={() => { setExpanded((v) => !v); setConfirmKick(false); setConfirmDeclareKing(false); }}
           title="Player controls"
         >
           {expanded ? '✕' : '···'}
@@ -199,6 +200,43 @@ function PlayerCard({ p, gameState, socket, onError, onSuccess, resurrectionBase
               </div>
             </div>
           )}
+
+          <div style={styles.controlGroup}>
+            <div style={styles.controlLabel}>Declare Winner</div>
+            {!confirmDeclareKing ? (
+              <button
+                style={{ ...styles.smallBtn, background: '#3a2a00', color: '#f0c040', border: '1px solid #8a6a00' }}
+                onClick={() => setConfirmDeclareKing(true)}
+              >
+                DECLARE KING OF MKMGA
+              </button>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ fontSize: 12, color: '#f0c040', lineHeight: 1.4 }}>
+                  End the game now and crown <strong>{p.displayName}</strong> as King of MKMGA?
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    style={{ ...styles.smallBtn, background: '#6a4a00', color: '#ffe066' }}
+                    onClick={() => {
+                      adminAction('declare-king');
+                      onSuccess(`${p.displayName} has been declared King of MKMGA!`);
+                      setConfirmDeclareKing(false);
+                      setExpanded(false);
+                    }}
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    style={{ ...styles.smallBtn, background: '#333', color: '#aaa' }}
+                    onClick={() => setConfirmDeclareKing(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -296,12 +334,15 @@ function HostControls({ gameState, socket }) {
         setTimeout(() => setErrorMsg(null), 4000);
         return;
       }
-      if (response?.archiveDir) {
-        setSuccessMsg(`Race data saved: ${response.archiveDir}`);
-      } else {
-        setSuccessMsg('Race data saved.');
-      }
+      setSuccessMsg('Race data saved. Downloading Excel…');
       setTimeout(() => setSuccessMsg(null), 5000);
+      // Trigger browser Save As dialog for Excel download
+      const a = document.createElement('a');
+      a.href = '/api/export-race-xlsx';
+      a.download = '';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
     });
   };
 
@@ -668,9 +709,17 @@ function HostControls({ gameState, socket }) {
       {currentStage === 'GAME_OVER' && (
         <div style={styles.section}>
           <div style={styles.sectionTitle}>Game Over</div>
+          {gameState.kingId && (() => {
+            const king = players.find((p) => p.id === gameState.kingId);
+            return king ? (
+              <div style={{ fontSize: 14, color: '#f0c040', fontWeight: 'bold' }}>
+                KING OF MKMGA: {king.displayName}
+              </div>
+            ) : null;
+          })()}
           <button style={{ ...styles.btn, background: '#7a1a1a', color: '#f88' }}
             onClick={() => setConfirmReset(true)}>
-            🔄 Reset &amp; Start New Game
+            Reset &amp; Start New Game
           </button>
         </div>
       )}

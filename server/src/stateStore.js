@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const XLSX = require('xlsx');
 
 const stateDir = path.join(__dirname, '../data');
 const stateFile = path.join(stateDir, 'game-state.json');
@@ -108,6 +109,100 @@ function saveRaceArchive(snapshot, options = {}) {
   }
 }
 
+function buildRaceXlsxBuffer(snapshot, options = {}) {
+  const winners = Array.isArray(options.winners) ? options.winners : [];
+  const players = Array.isArray(snapshot?.players) ? [...snapshot.players] : [];
+  players.sort((a, b) => Number(b.balance ?? 0) - Number(a.balance ?? 0));
+  const raceLog = Array.isArray(snapshot?.raceLog) ? snapshot.raceLog : [];
+
+  const wb = XLSX.utils.book_new();
+
+  // ── Sheet 1: Summary ──────────────────────────────────────────────────────
+  const summaryRows = [
+    ['Field', 'Value'],
+    ['Saved At', new Date().toISOString()],
+    ['Race Number', snapshot?.raceNumber ?? '?'],
+    ['Stage', snapshot?.currentStage ?? 'N/A'],
+    ['Race Result', snapshot?.raceResult ?? 'N/A'],
+    ['Pot Remaining', Number(snapshot?.pot ?? 0)],
+    ['Races Logged', raceLog.length],
+    ['Winners (last race)', winners.length ? winners.join(', ') : 'None'],
+  ];
+  const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+  wsSummary['!cols'] = [{ wch: 22 }, { wch: 40 }];
+  XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+  // ── Sheet 2: Leaderboard ──────────────────────────────────────────────────
+  const lbHeader = ['Rank', 'Display Name', 'Real Name', 'Balance ($)', 'Starting Balance ($)', 'Net Change ($)', 'Status'];
+  const lbRows = players.map((p, i) => {
+    const balance = Number(p.balance ?? 0);
+    const start   = Number(p.startingBalance ?? 0);
+    const net     = balance - start;
+    const statusFlags = [
+      p.eliminationState === 'failed_resurrection' ? 'ELIMINATED (no revive)' : null,
+      p.eliminationState === 'pending_resurrection' ? 'ELIMINATED' : null,
+      p.connected === false ? 'DISCONNECTED' : null,
+      p.noRevive ? 'NO REVIVE' : null,
+    ].filter(Boolean);
+    return [i + 1, p.displayName ?? p.realName ?? 'Unknown', p.realName ?? '', balance, start, net, statusFlags.join(', ') || 'Active'];
+  });
+  const wsLeaderboard = XLSX.utils.aoa_to_sheet([lbHeader, ...lbRows]);
+  wsLeaderboard['!cols'] = [6, 22, 22, 14, 20, 14, 24].map((w) => ({ wch: w }));
+  XLSX.utils.book_append_sheet(wb, wsLeaderboard, 'Leaderboard');
+
+  // ── Sheet 3: Race History (one row per player per race) ───────────────────
+  if (raceLog.length > 0) {
+    const histHeader = [
+      'Race #', 'Result', 'Entry Fee ($)', 'Pot ($)',
+      'Player', 'Balance Before ($)', 'Balance After ($)', 'Net This Race ($)',
+      'Positions', 'Contributed ($)', 'Action', 'Won?',
+    ];
+    const histRows = [];
+    raceLog.forEach((entry) => {
+      const raceNum    = entry.raceNumber ?? '?';
+      const result     = entry.raceResult ?? '?';
+      const entryFee   = entry.entryFee === 'ALL_IN' ? 'ALL IN' : Number(entry.entryFee ?? 0);
+      const pot        = Number(entry.potBeforePayout ?? 0);
+      (entry.players ?? []).forEach((p) => {
+        const before = Number(p.balanceBefore ?? 0);
+        const after  = Number(p.balanceAfter ?? 0);
+        const action = p.skippedRace ? 'Skipped'
+          : p.folded   ? 'Folded'
+          : p.allIn    ? 'All In'
+          : p.paidEntry ? 'Paid'
+          : 'Skipped';
+        histRows.push([
+          raceNum, result, entryFee, pot,
+          p.displayName ?? 'Unknown',
+          before, after, after - before,
+          (p.positions ?? []).join(', ') || '-',
+          Number(p.contributedThisRace ?? 0),
+          action,
+          p.won ? 'YES' : '',
+        ]);
+      });
+    });
+    const wsHistory = XLSX.utils.aoa_to_sheet([histHeader, ...histRows]);
+    wsHistory['!cols'] = [8, 10, 14, 10, 22, 18, 16, 16, 16, 18, 10, 8].map((w) => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, wsHistory, 'Race History');
+  }
+
+  // ── Sheet 4: Balance by Race (pivot — players as columns) ─────────────────
+  if (raceLog.length > 0) {
+    const allPlayerNames = [...new Set(raceLog.flatMap((e) => (e.players ?? []).map((p) => p.displayName ?? 'Unknown')))];
+    const pivotHeader = ['Race #', 'Result', ...allPlayerNames];
+    const pivotRows = raceLog.map((entry) => {
+      const byName = new Map((entry.players ?? []).map((p) => [p.displayName ?? 'Unknown', p.balanceAfter ?? 0]));
+      return [entry.raceNumber ?? '?', entry.raceResult ?? '?', ...allPlayerNames.map((name) => (byName.has(name) ? Number(byName.get(name)) : ''))];
+    });
+    const wsPivot = XLSX.utils.aoa_to_sheet([pivotHeader, ...pivotRows]);
+    wsPivot['!cols'] = [8, 10, ...allPlayerNames.map(() => 14)].map((w) => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, wsPivot, 'Balance by Race');
+  }
+
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
 function loadState() {
   try {
     if (!fs.existsSync(stateFile)) {
@@ -137,5 +232,6 @@ module.exports = {
   saveState,
   saveRaceSummary,
   saveRaceArchive,
+  buildRaceXlsxBuffer,
   raceSummaryFile
 };

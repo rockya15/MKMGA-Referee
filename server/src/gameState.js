@@ -49,7 +49,9 @@ class GameState {
     this.raceResult = null;
     this.preservePositionsNextRace = false;
     this.newlyEliminatedIds = [];
+    this.kingId = null;
     this.publicJoinUrl = process.env.PUBLIC_JOIN_URL || '';
+    this.raceLog = [];
   }
 
   getAllSnapshotFields() {
@@ -67,7 +69,9 @@ class GameState {
       raceResult: this.raceResult,
       preservePositionsNextRace: this.preservePositionsNextRace,
       newlyEliminatedIds: this.newlyEliminatedIds,
-      publicJoinUrl: this.publicJoinUrl
+      kingId: this.kingId,
+      publicJoinUrl: this.publicJoinUrl,
+      raceLog: this.raceLog,
     };
   }
 
@@ -111,7 +115,9 @@ class GameState {
     this.bettingState = merged.bettingState || this.createEmptyBettingState();
     this.raceResult = merged.raceResult || null;
     this.preservePositionsNextRace = Boolean(merged.preservePositionsNextRace);
+    this.kingId = merged.kingId ?? null;
     this.publicJoinUrl = String(merged.publicJoinUrl || '');
+    this.raceLog = Array.isArray(merged.raceLog) ? merged.raceLog : [];
     this.updateEliminationStates();
 
     return { success: true };
@@ -316,6 +322,7 @@ class GameState {
       eliminationState: 'alive',
       noRevive: false,
       eliminationSummary: null,
+      balanceHistory: [],
       passwordHash,
       salt
     };
@@ -490,7 +497,7 @@ class GameState {
       if (this.isNoRevivePlayer(player)) {
         return { error: 'This player is not eligible for revival.' };
       }
-      const baseCash = this.roundToQuarter(Math.max(0.25, Number(this.hostSettings?.resurrectionBaseCash ?? RESURRECTION_BASE_CASH)));
+      const baseCash = this.roundToQuarter(Math.max(0.25, Number(player.startingBalance ?? this.hostSettings?.resurrectionBaseCash ?? RESURRECTION_BASE_CASH)));
       player.balance = baseCash;
       player.paidEntry = false;
       player.skippedRace = false;
@@ -1036,6 +1043,10 @@ class GameState {
       return player.paidEntry && !player.folded && player.positions.includes(this.raceResult);
     });
 
+    // Capture pre-payout state for race log
+    const prePayoutBalances = new Map(this.players.map((p) => [p.id, p.balance]));
+    const potBeforePayout = this.pot;
+
     if (winners.length > 0) {
       const share = this.roundToQuarter(Math.floor((this.pot / winners.length) * 4) / 4);
       const totalPaid = this.roundToQuarter(share * winners.length);
@@ -1045,6 +1056,35 @@ class GameState {
         winner.balance = this.roundToQuarter(winner.balance + share);
       });
     }
+
+    // Record race log entry and update per-player balance history
+    const winnerIds = new Set(winners.map((w) => w.id));
+    const logEntry = {
+      raceNumber: this.raceNumber,
+      raceResult: this.raceResult,
+      entryFee: this.entryFee,
+      potBeforePayout,
+      players: this.players.map((p) => ({
+        id: p.id,
+        displayName: p.displayName ?? p.realName ?? 'Unknown',
+        balanceBefore: prePayoutBalances.get(p.id) ?? p.balance,
+        balanceAfter: p.balance,
+        positions: [...(p.positions ?? [])],
+        paidEntry: Boolean(p.paidEntry),
+        skippedRace: Boolean(p.skippedRace),
+        folded: Boolean(p.folded),
+        allIn: Boolean(p.allIn),
+        contributedThisRace: p.contributedThisRace ?? 0,
+        won: winnerIds.has(p.id),
+      })),
+    };
+    this.raceLog.push(logEntry);
+
+    // Update per-player balance history (used by client graphs)
+    this.players.forEach((p) => {
+      if (!Array.isArray(p.balanceHistory)) p.balanceHistory = [];
+      p.balanceHistory.push({ race: this.raceNumber, balance: p.balance });
+    });
 
     this.setStage(STAGES.PAYOUT);
 
@@ -1098,6 +1138,7 @@ class GameState {
     const alive = this.getAlivePlayers();
     if (alive.length <= 1) {
       this.newlyEliminatedIds = [];
+      this.kingId = alive[0]?.id ?? null;
       this.setStage(STAGES.GAME_OVER);
       return { success: true };
     }
@@ -1125,6 +1166,12 @@ class GameState {
       return { error: 'Not on elimination screen.' };
     }
     this.newlyEliminatedIds = [];
+    const alive = this.getAlivePlayers();
+    if (alive.length <= 1) {
+      this.kingId = alive[0]?.id ?? null;
+      this.setStage(STAGES.GAME_OVER);
+      return { success: true };
+    }
     this.setStage(STAGES.PRE_BET);
     return { success: true };
   }
@@ -1142,6 +1189,16 @@ class GameState {
     this.raceResult = null;
     this.preservePositionsNextRace = false;
     this.newlyEliminatedIds = [];
+    this.kingId = null;
+    this.raceLog = [];
+    return { success: true };
+  }
+
+  declareKing(playerId) {
+    const player = this.getPlayerById(playerId);
+    if (!player) return { error: 'Player not found.' };
+    this.kingId = playerId;
+    this.setStage(STAGES.GAME_OVER);
     return { success: true };
   }
 

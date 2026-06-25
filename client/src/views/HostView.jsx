@@ -6,6 +6,8 @@ import LeaderboardPanel from './panels/LeaderboardPanel';
 import ActiveElementPanel from './panels/ActiveElementPanel';
 import FooterDisplay from './panels/FooterDisplay';
 import { usePanelLayout } from '../hooks/usePanelLayout';
+import MKMGAEntryScreen from './panels/MKMGAEntryScreen';
+import KingOfMKMGAScreen from './panels/KingOfMKMGAScreen';
 
 // Which stages show the wheel panel
 const WHEEL_STAGES = ['POSITION_ASSIGNMENT'];
@@ -431,6 +433,12 @@ function HostView({ gameState, socket }) {
   const footerMode = activeElementType ? 'leaderboard' : 'full';
   const layout = usePanelLayout({ currentStage, activeElementType });
 
+  // Full-screen overlays
+  const isEntryScreen = currentStage === 'LOBBY' && !gameState.hostSettings?.lobbyOpen;
+  const effectiveKingId = gameState.kingId
+    || players.find((p) => p.eliminationState === 'alive' && p.balance > 0)?.id;
+  const isKingScreen = currentStage === 'GAME_OVER' && !!effectiveKingId;
+
   return (
     <div style={styles.root}>
       <div style={styles.header}>
@@ -531,6 +539,17 @@ function HostView({ gameState, socket }) {
         {/* Footer — full-width mode (sits below both panels) */}
         <FooterDisplay key={`footer-full-${footerClearKey}`} players={players} visible={footerMode === 'full' && footerVisible} raceNumber={raceNumber} cascadeSpinsThisRound={cascadeSpinsThisRound} ugcFirst={true} currentStage={currentStage} />
       </div>
+
+      {/* ── Full-screen overlays ── */}
+      {isEntryScreen && <MKMGAEntryScreen />}
+      {isKingScreen && (
+        <KingOfMKMGAScreen
+          players={players}
+          kingId={effectiveKingId}
+          getFavoriteColor={getFavoriteColor}
+          gameState={gameState}
+        />
+      )}
     </div>
   );
 }

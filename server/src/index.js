@@ -1420,6 +1420,24 @@ app.post('/api/upload-drawing', (req, res) => {
   });
 });
 
+// Export current race data as Excel download
+app.get('/api/export-race-xlsx', (req, res) => {
+  try {
+    const snapshot = gameState.toSnapshot();
+    const winners = getCurrentWinnerNames(snapshot);
+    const buffer = stateStore.buildRaceXlsxBuffer(snapshot, { winners });
+    const race = snapshot?.raceNumber ?? 'x';
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const filename = `mkmga-race-${race}-${stamp}.xlsx`;
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+  } catch (err) {
+    console.error('Excel export failed:', err);
+    res.status(500).json({ error: 'Export failed.' });
+  }
+});
+
 // Pre-validate join fields before the drawing step (no state mutation)
 app.post('/api/validate-join', (req, res) => {
   try {
@@ -1677,6 +1695,8 @@ io.on('connection', (socket) => {
       result = gameState.adminSetBalance(playerId, data.balance);
     } else if (action === 'set-positions') {
       result = gameState.adminSetPositions(playerId, data.positions);
+    } else if (action === 'declare-king') {
+      result = gameState.declareKing(playerId);
     } else {
       socket.emit('error', `Unknown admin action: ${String(action ?? 'undefined')}`); return;
     }
