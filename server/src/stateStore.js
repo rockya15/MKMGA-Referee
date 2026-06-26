@@ -200,6 +200,54 @@ function buildRaceXlsxBuffer(snapshot, options = {}) {
     XLSX.utils.book_append_sheet(wb, wsPivot, 'Balance by Race');
   }
 
+  // ── Sheet 5: Voting & Bets (players as rows, races as columns) ────────────
+  if (raceLog.length > 0) {
+    const raceNums = raceLog.map((e) => e.raceNumber ?? '?');
+
+    // Build name -> { raceNum -> { positions, bet } } from log
+    const playerDataMap = new Map();
+    raceLog.forEach((entry) => {
+      (entry.players ?? []).forEach((p) => {
+        const name = p.displayName ?? p.realName ?? 'Unknown';
+        if (!playerDataMap.has(name)) playerDataMap.set(name, new Map());
+        const action = p.skippedRace ? 'Skip' : p.folded ? 'Fold' : p.allIn ? 'All In' : null;
+        const contributed = Number(p.contributedThisRace ?? 0);
+        const betStr = action ? `${formatMoney(contributed)} (${action})` : formatMoney(contributed);
+        playerDataMap.get(name).set(entry.raceNumber ?? '?', {
+          positions: (p.positions ?? []).join(', ') || '-',
+          bet: betStr,
+        });
+      });
+    });
+
+    // Token state from current snapshot players
+    const tokenMap = new Map(
+      (snapshot.players ?? []).map((p) => [p.displayName ?? p.realName ?? 'Unknown', p.skipFoldTokenAvailable])
+    );
+
+    // Rows ordered by current balance desc (matches leaderboard)
+    const playerNames = players.map((p) => p.displayName ?? p.realName ?? 'Unknown');
+
+    const votingHeader = ['Player'];
+    raceNums.forEach((n) => { votingHeader.push(`Race ${n} Vote`); votingHeader.push(`Race ${n} Bet`); });
+    votingHeader.push('Skip/Fold Token?');
+
+    const votingRows = playerNames.map((name) => {
+      const row = [name];
+      raceNums.forEach((n) => {
+        const d = playerDataMap.get(name)?.get(n);
+        row.push(d?.positions ?? '-');
+        row.push(d?.bet ?? '-');
+      });
+      row.push(tokenMap.has(name) ? (tokenMap.get(name) ? 'Yes' : 'No') : '-');
+      return row;
+    });
+
+    const wsVoting = XLSX.utils.aoa_to_sheet([votingHeader, ...votingRows]);
+    wsVoting['!cols'] = [22, ...raceNums.flatMap(() => [14, 18]), 18].map((w) => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, wsVoting, 'Voting & Bets');
+  }
+
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
 
