@@ -13,14 +13,21 @@ function shuffle(arr) {
 function computeRankings(players, kingId, totalRaces) {
   const mapped = players.map((p) => ({
     ...p,
-    _sortRaces: p.id === kingId ? Infinity : (p.eliminationSummary?.survivedRaces ?? 0),
+    // Players with no eliminationSummary (still alive, non-king) survived all races
+    _sortRaces: p.id === kingId
+      ? Infinity
+      : (p.eliminationSummary?.survivedRaces ?? totalRaces),
     _name: (p.displayName || p.realName || '').toLowerCase(),
-    displayedRaces: p.id === kingId ? totalRaces : (p.eliminationSummary?.survivedRaces ?? 0),
+    displayedRaces: p.id === kingId
+      ? totalRaces
+      : (p.eliminationSummary?.survivedRaces ?? totalRaces),
   }));
+
   mapped.sort((a, b) => {
     if (b._sortRaces !== a._sortRaces) return b._sortRaces - a._sortRaces;
     return a._name.localeCompare(b._name);
   });
+
   let pos = 1;
   return mapped.map((p, i) => {
     if (i > 0 && p._sortRaces !== mapped[i - 1]._sortRaces) pos = i + 1;
@@ -28,10 +35,31 @@ function computeRankings(players, kingId, totalRaces) {
   });
 }
 
-// Repeat items until total >= MIN_TOTAL for a seamless infinite loop.
-// Translates by -1/reps of track height = exactly one copy = seamless.
+// Distribute N tiles into rows of max 6, as evenly as possible.
+function distributeRows(n) {
+  if (n === 0) return [];
+  const rows = Math.ceil(n / 6);
+  const perRow = Math.ceil(n / rows);
+  const result = [];
+  let rem = n;
+  for (let r = 0; r < rows; r++) {
+    const count = Math.min(perRow, rem);
+    result.push(count);
+    rem -= count;
+  }
+  return result;
+}
+
 const MIN_TOTAL_ITEMS = 22;
 
+function getPromptTitle(prompt) {
+  if (!prompt) return '';
+  let t = prompt.replace(/^draw\s+/i, '');
+  t = t.replace(/^(a|an|the)\s+/i, '');
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+// --- Scroll panel ---
 function CreditsPanel({ items, borderSide }) {
   const reps = Math.max(2, Math.ceil(MIN_TOTAL_ITEMS / Math.max(1, items.length)));
   const scrollEnd = `-${(100 / reps).toFixed(4)}%`;
@@ -56,7 +84,7 @@ function CreditsPanel({ items, borderSide }) {
   );
 }
 
-// --- Generic stat card ---
+// --- Banner cards ---
 function StatCard({ icon, label, value, sub }) {
   return (
     <div style={s.statCard}>
@@ -68,31 +96,28 @@ function StatCard({ icon, label, value, sub }) {
   );
 }
 
-// --- Drawing card: full-width square image ---
 function DrawingCard({ player, getFavoriteColor }) {
   const name = player.displayName || player.realName;
   const nameColor = getFavoriteColor?.(player) ?? '#e0e0e0';
+  const title = getPromptTitle(player.drawingPrompt);
   return (
     <div style={s.drawingCard}>
       <img
         src={player.drawingImageUrl}
         alt=""
-        style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', display: 'block' }}
+        style={s.drawingImg}
       />
-      <div style={s.drawingLabel}>
+      <div style={s.drawingOverlay}>
         <Avatar player={player} size={28} borderWidth={2} getFavoriteColor={getFavoriteColor} />
-        <div style={s.drawingLabelText}>
-          <div style={{ color: nameColor, fontWeight: 800, fontSize: 14, lineHeight: 1.2 }}>{name}</div>
-          {player.drawingPrompt && (
-            <div style={{ color: '#ccc', fontSize: 12, lineHeight: 1.3, marginTop: 2 }}>{player.drawingPrompt}</div>
-          )}
+        <div style={s.drawingOverlayText}>
+          <span style={{ color: nameColor, fontWeight: 700 }}>{name}</span>
+          {title && <span style={{ color: '#ddd' }}>'s {title}</span>}
         </div>
       </div>
     </div>
   );
 }
 
-// --- Quote card: avatar + "{name} says: {prompt}" ---
 function QuoteCard({ player, getFavoriteColor }) {
   const name = player.displayName || player.realName;
   const nameColor = getFavoriteColor?.(player) ?? '#e0e0e0';
@@ -101,39 +126,54 @@ function QuoteCard({ player, getFavoriteColor }) {
       <Avatar player={player} size={36} borderWidth={2} getFavoriteColor={getFavoriteColor} />
       <div style={s.quoteText}>
         <span style={{ color: nameColor, fontWeight: 800 }}>{name}</span>
-        <span style={{ color: '#888' }}> says: </span>
-        <span style={{ color: '#ccc', fontStyle: 'italic' }}>"{player.funStatement}"</span>
+        <span style={{ color: '#ccc' }}> says: </span>
+        <span style={{ color: '#fff', fontStyle: 'italic' }}>"{player.funStatement}"</span>
       </div>
     </div>
   );
 }
 
-// --- Center leaderboard row ---
-function RankRow({ player, getFavoriteColor, compact }) {
-  const isFirst = player.finalPosition === 1;
+// --- Center: tile-based placement groups ---
+function PlacementTile({ player, isFirst, getFavoriteColor }) {
   const nameColor = getFavoriteColor?.(player) ?? '#d0d0d0';
+  const name = player.displayName || player.realName;
   return (
-    <div style={{
-      ...s.rankRow,
-      ...(isFirst ? s.rankRowFirst : {}),
-      padding: compact ? '7px 16px' : '11px 18px',
-    }}>
-      <div style={{ ...s.rankPos, fontSize: compact ? 14 : 18, width: compact ? 32 : 44 }}>
-        {isFirst ? '👑' : `#${player.finalPosition}`}
-      </div>
+    <div style={{ ...s.tile, ...(isFirst ? s.tileFirst : {}) }}>
       <Avatar
         player={player}
-        size={isFirst ? (compact ? 42 : 52) : (compact ? 32 : 42)}
+        size={isFirst ? 52 : 44}
         borderWidth={isFirst ? 3 : 2}
         borderColor={isFirst ? '#f0c040' : undefined}
         getFavoriteColor={getFavoriteColor}
       />
-      <div style={{ ...s.rankName, fontSize: compact ? 14 : 18, color: nameColor }}>
-        {player.displayName || player.realName}
+      <div style={{ ...s.tileName, color: nameColor }}>{name}</div>
+    </div>
+  );
+}
+
+function PlacementGroup({ position, players, getFavoriteColor }) {
+  const isFirst = position === 1;
+  const rowSizes = distributeRows(players.length);
+  let idx = 0;
+
+  return (
+    <div style={s.group}>
+      <div style={{ ...s.groupLabel, ...(isFirst ? s.groupLabelFirst : {}) }}>
+        {isFirst ? '👑' : `#${position}`}
       </div>
-      <div style={{ ...s.rankRaces, fontSize: compact ? 12 : 14 }}>
-        {player.displayedRaces} race{player.displayedRaces !== 1 ? 's' : ''}
-      </div>
+      {rowSizes.map((count, r) => {
+        const rowPlayers = players.slice(idx, idx + count);
+        idx += count;
+        return (
+          <div key={r} style={s.tileRow}>
+            {rowPlayers.map((p) => (
+              <div key={p.id} style={{ flex: 1, minWidth: 0, maxWidth: `${100 / count}%` }}>
+                <PlacementTile player={p} isFirst={isFirst} getFavoriteColor={getFavoriteColor} />
+              </div>
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -141,13 +181,22 @@ function RankRow({ player, getFavoriteColor, compact }) {
 // --- Main ---
 export default function GameEndLeaderboard({ players, kingId, getFavoriteColor, gameState }) {
   const totalRaces = gameState?.raceNumber ?? 0;
+
   const rankings = useMemo(
     () => computeRankings(players, kingId, totalRaces),
     [players, kingId, totalRaces],
   );
-  const compact = rankings.length > 8;
 
-  // Build the full pool of banner content items
+  // Group by finalPosition, preserving sort order
+  const groups = useMemo(() => {
+    const map = new Map();
+    rankings.forEach((p) => {
+      if (!map.has(p.finalPosition)) map.set(p.finalPosition, []);
+      map.get(p.finalPosition).push(p);
+    });
+    return [...map.entries()].sort((a, b) => a[0] - b[0]);
+  }, [rankings]);
+
   const allItems = useMemo(() => {
     const king = rankings.find((p) => p.finalPosition === 1);
     const eliminated = players.filter((p) => p.id !== kingId && p.eliminationSummary);
@@ -164,57 +213,42 @@ export default function GameEndLeaderboard({ players, kingId, getFavoriteColor, 
 
     const items = [];
 
-    // Game-level stat cards
     items.push(<StatCard key="races" icon="🏁" label="Total Races" value={totalRaces} />);
     items.push(<StatCard key="players" icon="👥" label="Players" value={players.length} />);
     if (king) {
-      items.push(
-        <StatCard key="king" icon="🏆" label="King of MKMGA"
-          value={king.displayName || king.realName}
-          sub={`${king.displayedRaces} races survived`}
-        />
-      );
+      items.push(<StatCard key="king" icon="🏆" label="King of MKMGA"
+        value={king.displayName || king.realName}
+        sub={`${king.displayedRaces} races survived`}
+      />);
     }
     if (longestRun && longestRun.id !== firstOut?.id) {
-      items.push(
-        <StatCard key="longest" icon="🏅" label="Longest Runner-Up"
-          value={longestRun.displayName || longestRun.realName}
-          sub={`${longestRun.eliminationSummary.survivedRaces} races`}
-        />
-      );
+      items.push(<StatCard key="longest" icon="🏅" label="Longest Runner-Up"
+        value={longestRun.displayName || longestRun.realName}
+        sub={`${longestRun.eliminationSummary.survivedRaces} races`}
+      />);
     }
     if (firstOut) {
-      items.push(
-        <StatCard key="first" icon="⚡" label="First Out"
-          value={firstOut.displayName || firstOut.realName}
-          sub={`Eliminated at race ${(firstOut.eliminationSummary.survivedRaces ?? 0) + 1}`}
-        />
-      );
+      items.push(<StatCard key="first" icon="⚡" label="First Out"
+        value={firstOut.displayName || firstOut.realName}
+        sub={`Eliminated at race ${(firstOut.eliminationSummary.survivedRaces ?? 0) + 1}`}
+      />);
     }
     if (avgSurvival) {
       items.push(<StatCard key="avg" icon="📊" label="Avg. Survival" value={`${avgSurvival} races`} />);
     }
 
-    // UGC: drawings
     players.filter((p) => p.drawingImageUrl).forEach((p) => {
-      items.push(
-        <DrawingCard key={`draw-${p.id}`} player={p} getFavoriteColor={getFavoriteColor} />
-      );
+      items.push(<DrawingCard key={`draw-${p.id}`} player={p} getFavoriteColor={getFavoriteColor} />);
     });
 
-    // UGC: fun statements as player "says" cards
     players.filter((p) => p.funStatement?.trim()).forEach((p) => {
-      items.push(
-        <QuoteCard key={`quote-${p.id}`} player={p} getFavoriteColor={getFavoriteColor} />
-      );
+      items.push(<QuoteCard key={`quote-${p.id}`} player={p} getFavoriteColor={getFavoriteColor} />);
     });
 
     return items;
-  // getFavoriteColor is a stable module-level function, safe to omit from deps
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rankings, players, kingId, totalRaces]);
 
-  // Each side gets its own independent shuffle — different order, same pool
   const leftItems  = useMemo(() => shuffle(allItems), [allItems]);
   const rightItems = useMemo(() => shuffle(allItems), [allItems]);
 
@@ -226,9 +260,14 @@ export default function GameEndLeaderboard({ players, kingId, getFavoriteColor, 
 
       <div style={s.center}>
         <div style={s.centerTitle}>FINAL STANDINGS</div>
-        <div style={s.rankList}>
-          {rankings.map((p) => (
-            <RankRow key={p.id} player={p} getFavoriteColor={getFavoriteColor} compact={compact} />
+        <div style={s.groupList}>
+          {groups.map(([pos, grpPlayers]) => (
+            <PlacementGroup
+              key={pos}
+              position={pos}
+              players={grpPlayers}
+              getFavoriteColor={getFavoriteColor}
+            />
           ))}
         </div>
       </div>
@@ -256,6 +295,8 @@ const s = {
     pointerEvents: 'none',
     zIndex: 1,
   },
+
+  // Scroll panels
   panelOuter: {
     width: '25%',
     flexShrink: 0,
@@ -264,80 +305,64 @@ const s = {
     zIndex: 2,
   },
   panelFadeTop: {
-    position: 'absolute',
-    top: 0, left: 0, right: 0,
-    height: 100,
+    position: 'absolute', top: 0, left: 0, right: 0, height: 100,
     background: 'linear-gradient(to bottom, #050508 0%, transparent 100%)',
-    zIndex: 3,
-    pointerEvents: 'none',
+    zIndex: 3, pointerEvents: 'none',
   },
   panelFadeBot: {
-    position: 'absolute',
-    bottom: 0, left: 0, right: 0,
-    height: 100,
+    position: 'absolute', bottom: 0, left: 0, right: 0, height: 100,
     background: 'linear-gradient(to top, #050508 0%, transparent 100%)',
-    zIndex: 3,
-    pointerEvents: 'none',
+    zIndex: 3, pointerEvents: 'none',
   },
 
-  // Generic stat card
+  // Banner cards
   statCard: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    padding: '14px 12px',
-    margin: '4px 8px',
-    background: 'rgba(255,255,255,0.04)',
-    borderRadius: 10,
-    border: '1px solid rgba(255,255,255,0.08)',
-    textAlign: 'center',
+    display: 'flex', flexDirection: 'column', alignItems: 'center',
+    padding: '14px 12px', margin: '4px 8px',
+    background: 'rgba(255,255,255,0.04)', borderRadius: 10,
+    border: '1px solid rgba(255,255,255,0.08)', textAlign: 'center',
   },
-  statIcon: { fontSize: 26, marginBottom: 6, lineHeight: 1 },
+  statIcon: { fontSize: 'clamp(22px, 2vw, 32px)', marginBottom: 6, lineHeight: 1 },
   statLabel: {
-    fontSize: 9, fontWeight: 700, color: '#888',
-    letterSpacing: 2, textTransform: 'uppercase', fontFamily: 'monospace', marginBottom: 4,
+    fontSize: 'clamp(9px, 0.75vw, 12px)', fontWeight: 700, color: '#aaa', letterSpacing: 2,
+    textTransform: 'uppercase', fontFamily: 'monospace', marginBottom: 4,
   },
   statValue: {
-    fontSize: 18, fontWeight: 900, color: '#e8e8e8',
+    fontSize: 'clamp(15px, 1.4vw, 22px)', fontWeight: 900, color: '#fff',
     fontFamily: "'Segoe UI', 'Arial Black', sans-serif", marginBottom: 2,
   },
-  statSub: { fontSize: 11, color: '#999', fontFamily: "'Segoe UI', sans-serif" },
+  statSub: { fontSize: 'clamp(11px, 0.85vw, 14px)', color: '#ccc', fontFamily: "'Segoe UI', sans-serif" },
 
-  // Drawing card — no side margins so image stretches full panel width
   drawingCard: {
-    margin: '4px 0',
-    overflow: 'hidden',
+    margin: '4px 8px', borderRadius: 10, overflow: 'hidden', position: 'relative',
+    background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
   },
-  drawingLabel: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    padding: '10px 12px',
-    background: 'rgba(0,0,0,0.75)',
+  drawingImg: {
+    width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', display: 'block',
   },
-  drawingLabelText: {
-    flex: 1,
-    minWidth: 0,
+  drawingOverlay: {
+    position: 'absolute', bottom: 0, left: 0,
+    display: 'flex', alignItems: 'center', gap: 8,
+    padding: 'clamp(8px, 1vmin, 12px) clamp(12px, 1.4vmin, 18px)',
+    background: 'rgba(8, 8, 16, 0.88)',
+    borderRadius: '0 clamp(10px, 1.4vw, 16px) 0 10px',
+  },
+  drawingOverlayText: {
+    whiteSpace: 'nowrap',
+    fontSize: 'clamp(13px, 1.3vw, 20px)', lineHeight: 1.25,
+    fontFamily: "'Segoe UI', sans-serif",
   },
 
-  // Quote card
   quoteCard: {
-    display: 'flex',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    padding: '12px 14px',
-    margin: '4px 8px',
-    background: 'rgba(255,255,255,0.04)',
-    borderRadius: 10,
+    display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10,
+    padding: 'clamp(14px, 1.8vmin, 26px) 14px', margin: '4px 8px',
+    background: 'rgba(255,255,255,0.04)', borderRadius: 10,
     border: '1px solid rgba(255,255,255,0.08)',
+    minHeight: 'clamp(64px, 9vmin, 110px)',
   },
   quoteText: {
-    flex: 1,
-    fontSize: 13,
-    lineHeight: 1.4,
-    fontFamily: "'Segoe UI', sans-serif",
-    color: '#ccc',
+    flex: 1, fontSize: 'clamp(13px, 1.15vw, 19px)', lineHeight: 1.45,
+    fontFamily: "'Segoe UI', sans-serif", color: '#fff',
   },
 
   // Center panel
@@ -345,65 +370,75 @@ const s = {
     flex: 1,
     display: 'flex',
     flexDirection: 'column',
-    alignItems: 'center',
-    padding: '28px 0 20px',
+    alignItems: 'stretch',
+    padding: '24px 12px 16px',
     borderLeft: '1px solid rgba(255,255,255,0.06)',
     borderRight: '1px solid rgba(255,255,255,0.06)',
     zIndex: 2,
     overflow: 'hidden',
   },
   centerTitle: {
-    fontSize: 'clamp(18px, 2.8vw, 38px)',
-    fontWeight: 900,
-    color: '#f0c040',
-    letterSpacing: 6,
+    fontSize: 'clamp(16px, 2.4vw, 32px)',
+    fontWeight: 900, color: '#f0c040', letterSpacing: 6,
     textTransform: 'uppercase',
     fontFamily: "'Segoe UI', 'Impact', 'Arial Black', sans-serif",
     textShadow: '0 0 20px rgba(240,192,64,0.6)',
-    marginBottom: 20,
-    flexShrink: 0,
+    marginBottom: 16, flexShrink: 0, textAlign: 'center',
   },
-  rankList: {
-    width: '100%',
+  groupList: {
+    flex: 1,
     display: 'flex',
     flexDirection: 'column',
-    gap: 4,
+    gap: 10,
     overflowY: 'auto',
-    padding: '0 8px',
+    overflowX: 'hidden',
   },
-  rankRow: {
+
+  // Placement groups
+  group: {
     display: 'flex',
-    alignItems: 'center',
-    gap: 12,
-    background: 'rgba(255,255,255,0.04)',
-    borderRadius: 10,
-    border: '1px solid rgba(255,255,255,0.07)',
+    flexDirection: 'column',
+    gap: 3,
   },
-  rankRowFirst: {
+  groupLabel: {
+    fontSize: 'clamp(12px, 1.2vw, 17px)', fontWeight: 900, color: '#bbb',
+    fontFamily: "'Segoe UI', 'Arial Black', sans-serif",
+    paddingLeft: 4, marginBottom: 2,
+  },
+  groupLabelFirst: {
+    fontSize: 'clamp(18px, 2vw, 28px)', color: '#f0c040',
+    textShadow: '0 0 12px rgba(240,192,64,0.5)',
+  },
+  tileRow: {
+    display: 'flex',
+    flexDirection: 'row',
+    gap: 3,
+  },
+
+  // Individual tile
+  tile: {
+    height: 100,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    padding: '8px 4px',
+    background: 'rgba(255,255,255,0.04)',
+    borderRadius: 8,
+    border: '1px solid rgba(255,255,255,0.08)',
+    overflow: 'hidden',
+  },
+  tileFirst: {
     background: 'rgba(240,192,64,0.1)',
     border: '1px solid rgba(240,192,64,0.3)',
-    boxShadow: '0 0 18px rgba(240,192,64,0.12)',
+    boxShadow: '0 0 14px rgba(240,192,64,0.1)',
   },
-  rankPos: {
-    textAlign: 'center',
-    fontWeight: 900,
-    color: '#888',
-    flexShrink: 0,
-    fontFamily: "'Segoe UI', 'Arial Black', sans-serif",
-  },
-  rankName: {
-    flex: 1,
-    fontWeight: 700,
+  tileName: {
+    fontSize: 'clamp(12px, 1.2vw, 17px)', fontWeight: 700,
     fontFamily: "'Segoe UI', 'Arial', sans-serif",
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  },
-  rankRaces: {
-    color: '#888',
-    fontFamily: 'monospace',
-    flexShrink: 0,
-    textAlign: 'right',
-    paddingRight: 4,
+    textAlign: 'center', lineHeight: 1.2,
+    overflow: 'hidden', textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap', width: '100%', padding: '0 6px',
   },
 };

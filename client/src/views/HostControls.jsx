@@ -268,6 +268,7 @@ function HostControls({ gameState, socket }) {
   const [errorMsg, setErrorMsg] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [confirmGameOverReset, setConfirmGameOverReset] = useState(false);
   const [pendingResurrectionPromptOpen, setPendingResurrectionPromptOpen] = useState(false);
   const [newDebugChannel, setNewDebugChannel] = useState('');
   const playerCardRefs = useRef(new Map());
@@ -717,10 +718,32 @@ function HostControls({ gameState, socket }) {
               </div>
             ) : null;
           })()}
-          <button style={{ ...styles.btn, background: '#7a1a1a', color: '#f88' }}
-            onClick={() => setConfirmReset(true)}>
-            Reset &amp; Start New Game
-          </button>
+          {!confirmGameOverReset ? (
+            <button style={{ ...styles.btn, background: '#7a1a1a', color: '#f88' }}
+              onClick={() => setConfirmGameOverReset(true)}>
+              Reset &amp; Start New Game
+            </button>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ color: '#f88', fontSize: 13 }}>
+                ⚠️ This will wipe ALL players, balances, and history. Are you sure?
+              </div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  style={{ ...styles.btn, background: '#7a1a1a', color: '#fff' }}
+                  onClick={() => { handleAction('reset-game'); setConfirmGameOverReset(false); }}
+                >
+                  Yes, Reset Everything
+                </button>
+                <button
+                  style={{ ...styles.btn, background: '#333', color: '#aaa' }}
+                  onClick={() => setConfirmGameOverReset(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

@@ -1138,6 +1138,7 @@ class GameState {
     const alive = this.getAlivePlayers();
     if (alive.length <= 1) {
       this.newlyEliminatedIds = [];
+      this._resolvePendingResurrectionsAsDenied();
       this.kingId = alive[0]?.id ?? null;
       this.setStage(STAGES.GAME_OVER);
       return { success: true };
@@ -1168,6 +1169,7 @@ class GameState {
     this.newlyEliminatedIds = [];
     const alive = this.getAlivePlayers();
     if (alive.length <= 1) {
+      this._resolvePendingResurrectionsAsDenied();
       this.kingId = alive[0]?.id ?? null;
       this.setStage(STAGES.GAME_OVER);
       return { success: true };
@@ -1194,9 +1196,20 @@ class GameState {
     return { success: true };
   }
 
+  // Treat any players still awaiting resurrection as denied — used when the game ends.
+  _resolvePendingResurrectionsAsDenied() {
+    this.players.forEach((player) => {
+      if (player.eliminationState === 'pending_resurrection') {
+        player.eliminationState = 'failed_resurrection';
+        player.eliminationSummary = this.buildEliminationSummary(player.id, player);
+      }
+    });
+  }
+
   declareKing(playerId) {
     const player = this.getPlayerById(playerId);
     if (!player) return { error: 'Player not found.' };
+    this._resolvePendingResurrectionsAsDenied();
     this.kingId = playerId;
     this.setStage(STAGES.GAME_OVER);
     return { success: true };
