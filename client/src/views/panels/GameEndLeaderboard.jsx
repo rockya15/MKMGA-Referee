@@ -28,9 +28,10 @@ function computeRankings(players, kingId, totalRaces) {
     return a._name.localeCompare(b._name);
   });
 
-  let pos = 1;
-  return mapped.map((p, i) => {
-    if (i > 0 && p._sortRaces !== mapped[i - 1]._sortRaces) pos = i + 1;
+  let pos = 0;
+  let lastRaces = null;
+  return mapped.map((p) => {
+    if (p._sortRaces !== lastRaces) { pos++; lastRaces = p._sortRaces; }
     return { ...p, finalPosition: pos };
   });
 }

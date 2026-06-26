@@ -245,7 +245,7 @@ function PlayerCard({ p, gameState, socket, onError, onSuccess, resurrectionBase
 
 function HostControls({ gameState, socket }) {
   const [resultPlacement, setResultPlacement] = useState('1');
-  const [maxCashCap, setMaxCashCap] = useState('15');
+  const [maxCashCap, setMaxCashCap] = useState('20');
   const [publicUrlInput, setPublicUrlInput] = useState('');
   const [botAddCount, setBotAddCount] = useState('4');
   const [botAutoPick, setBotAutoPick] = useState(true);

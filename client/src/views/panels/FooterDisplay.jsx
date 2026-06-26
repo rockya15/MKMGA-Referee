@@ -75,7 +75,7 @@ function FooterDisplay({ players, visible, raceNumber = 1, cascadeSpinsThisRound
   }, [currentItem]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Render ───────────────────────────────────────────────────────────────
-  const effectiveVisible = visible;
+  const effectiveVisible = visible || (isLobby && showWaiting);
   const accent     = showWaiting ? '#555' : (TYPE_ACCENT[displayItem?.type] ?? '#f0c040');
   const badgeLabel = showWaiting ? null : getBadgeLabel(displayItem);
   const WAITING_HEIGHT = 72;

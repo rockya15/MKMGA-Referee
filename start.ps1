@@ -6,14 +6,14 @@ function Write-OK($msg)      { Write-Host "  [ OK ] $msg" -ForegroundColor Green
 function Write-Warn($msg)    { Write-Host "  [ !! ] $msg" -ForegroundColor Yellow }
 function Write-Err($msg)     { Write-Host "  [FAIL] $msg" -ForegroundColor Red }
 
-function Write-Link($label, $url, $color = 'Yellow') {
+function Write-Link($label, $url, $color) {
     $e = [char]27
     $link = "${e}]8;;${url}${e}\${url}${e}]8;;${e}\"
     Write-Host "  $label " -ForegroundColor Gray -NoNewline
     Write-Host $link -ForegroundColor $color
 }
 
-# ── Check Node.js ─────────────────────────────────────────────────────────────
+# -- Check Node.js -------------------------------------------------------------
 Write-Section "Checking prerequisites..."
 
 $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
@@ -35,10 +35,10 @@ if (-not $nodeCmd) {
 $nodeVersion = (node --version 2>&1)
 Write-OK "Node.js $nodeVersion"
 
-# ── Install server dependencies (first run only) ──────────────────────────────
+# -- Install server dependencies (first run only) ------------------------------
 $serverModules = "$Root\server\node_modules"
 if (-not (Test-Path $serverModules)) {
-    Write-Section "Installing server dependencies (first time — needs internet)..."
+    Write-Section "Installing server dependencies (first time - needs internet)..."
     Push-Location "$Root\server"
     npm install
     $code = $LASTEXITCODE
@@ -53,10 +53,10 @@ if (-not (Test-Path $serverModules)) {
     Write-OK "Server dependencies already installed."
 }
 
-# ── Build client (first run only) ─────────────────────────────────────────────
+# -- Build client (first run only) ---------------------------------------------
 $clientDist = "$Root\client\dist"
 if (-not (Test-Path $clientDist)) {
-    Write-Section "Building client (first time — this takes about a minute)..."
+    Write-Section "Building client (first time - this takes about a minute)..."
     $clientModules = "$Root\client\node_modules"
     if (-not (Test-Path $clientModules)) {
         Push-Location "$Root\client"
@@ -83,7 +83,7 @@ if (-not (Test-Path $clientDist)) {
     Write-OK "Client already built."
 }
 
-# ── Kill anything on port 3000 ────────────────────────────────────────────────
+# -- Kill anything on port 3000 ------------------------------------------------
 Write-Section "Cleaning up port 3000..."
 $conn = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($conn) {
@@ -95,7 +95,7 @@ if ($conn) {
 
 Remove-Item $cfLog -ErrorAction SilentlyContinue
 
-# ── Start services ────────────────────────────────────────────────────────────
+# -- Start server --------------------------------------------------------------
 Write-Section "Starting game server..."
 $currentPath = $env:PATH
 $jobs = @{}
@@ -107,7 +107,7 @@ $jobs['SERVER'] = Start-Job -ScriptBlock {
     npm start 2>&1
 } -ArgumentList $Root, $currentPath
 
-# Cloudflared is optional — only start if installed
+# Cloudflared is optional - only start if installed
 $cfCmd = Get-Command cloudflared -ErrorAction SilentlyContinue
 if ($cfCmd) {
     $jobs['CLOUDFLARE'] = Start-Job -ScriptBlock {
@@ -120,12 +120,12 @@ if ($cfCmd) {
     } -ArgumentList $Root, $currentPath, $cfLog
     Write-OK "Cloudflare tunnel starting (remote player access)."
 } else {
-    Write-Warn "cloudflared not found — remote tunnel disabled."
+    Write-Warn "cloudflared not found - remote tunnel disabled."
     Write-Host "  Players on the same Wi-Fi can still join via your local IP." -ForegroundColor Gray
     Write-Host "  To enable remote access: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" -ForegroundColor Gray
 }
 
-# ── Wait for server then open browser ─────────────────────────────────────────
+# -- Wait for server then open browser -----------------------------------------
 Write-Host ""
 Write-Host "  Waiting for server..." -ForegroundColor White
 
@@ -144,12 +144,10 @@ try {
             }
         }
 
-        # Open browser once server responds
         if (-not $browserOpened) {
             try {
                 Invoke-WebRequest "http://localhost:3000" -UseBasicParsing -TimeoutSec 1 -ErrorAction Stop | Out-Null
 
-                # Get local network IP for same-network players
                 $ip = (Get-NetIPAddress -AddressFamily IPv4 |
                     Where-Object { $_.InterfaceAlias -notmatch 'Loopback' -and $_.IPAddress -notmatch '^169' } |
                     Select-Object -First 1).IPAddress
@@ -176,7 +174,6 @@ try {
             } catch {}
         }
 
-        # Print Cloudflare URL when it appears
         if (-not $cfUrl -and (Test-Path $cfLog)) {
             $content = Get-Content $cfLog -Raw -ErrorAction SilentlyContinue
             if ($content -match 'https://[a-z0-9\-]+\.trycloudflare\.com') {
