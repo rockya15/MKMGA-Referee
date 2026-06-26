@@ -35,6 +35,25 @@ if (-not $nodeCmd) {
 $nodeVersion = (node --version 2>&1)
 Write-OK "Node.js $nodeVersion"
 
+# -- Check cloudflared ---------------------------------------------------------
+$cfCmd = Get-Command cloudflared -ErrorAction SilentlyContinue
+if (-not $cfCmd) {
+    Write-Err "cloudflared is not installed."
+    Write-Host ""
+    Write-Host "  cloudflared is required for remote player access (Cloudflare Tunnel)." -ForegroundColor White
+    Write-Host "  Download the Windows installer from:" -ForegroundColor White
+    Write-Host ""
+    Write-Host "    https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  After installing cloudflared, close this window and run Start Game.bat again." -ForegroundColor White
+    Write-Host ""
+    $open = Read-Host "  Open the download page now? (Y/N)"
+    if ($open -match '^[Yy]') { Start-Process "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" }
+    exit 1
+}
+
+Write-OK "cloudflared $(cloudflared --version 2>&1 | Select-String '\d+\.\d+\.\d+' | ForEach-Object { $_.Matches[0].Value })"
+
 # -- Install server dependencies (first run only) ------------------------------
 $serverModules = "$Root\server\node_modules"
 if (-not (Test-Path $serverModules)) {
@@ -107,23 +126,15 @@ $jobs['SERVER'] = Start-Job -ScriptBlock {
     npm start 2>&1
 } -ArgumentList $Root, $currentPath
 
-# Cloudflared is optional - only start if installed
-$cfCmd = Get-Command cloudflared -ErrorAction SilentlyContinue
-if ($cfCmd) {
-    $jobs['CLOUDFLARE'] = Start-Job -ScriptBlock {
-        param($root, $path, $cfLog)
-        $env:PATH = $path
-        cloudflared tunnel --url http://localhost:3000 2>&1 | ForEach-Object {
-            $_ | Out-File -Append -Encoding utf8 $cfLog
-            $_
-        }
-    } -ArgumentList $Root, $currentPath, $cfLog
-    Write-OK "Cloudflare tunnel starting (remote player access)."
-} else {
-    Write-Warn "cloudflared not found - remote tunnel disabled."
-    Write-Host "  Players on the same Wi-Fi can still join via your local IP." -ForegroundColor Gray
-    Write-Host "  To enable remote access: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" -ForegroundColor Gray
-}
+$jobs['CLOUDFLARE'] = Start-Job -ScriptBlock {
+    param($root, $path, $cfLog)
+    $env:PATH = $path
+    cloudflared tunnel --url http://localhost:3000 2>&1 | ForEach-Object {
+        $_ | Out-File -Append -Encoding utf8 $cfLog
+        $_
+    }
+} -ArgumentList $Root, $currentPath, $cfLog
+Write-OK "Cloudflare tunnel starting (remote player access)."
 
 # -- Wait for server then open browser -----------------------------------------
 Write-Host ""
