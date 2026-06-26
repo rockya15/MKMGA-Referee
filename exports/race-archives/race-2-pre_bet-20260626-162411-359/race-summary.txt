@@ -1,0 +1,26 @@
+MKMGA RACE SUMMARY
+Saved: 2026-06-26T20:24:11.361Z
+Race Number: 2
+Result: N/A
+Stage: PRE_BET
+Pot Remaining: $8.00
+
+Winners (0): None
+
+Players (sorted by balance):
+1. Brenda | balance=$106.00 | start=$20.00 | net=+86.00 | in=$0.50 | positions=- | PAID
+2. Roger | balance=$19.50 | start=$20.00 | net=-0.50 | in=$0.50 | positions=- | PAID
+3. Nancy | balance=$19.50 | start=$20.00 | net=-0.50 | in=$0.50 | positions=- | PAID
+4. Peggy | balance=$19.25 | start=$20.00 | net=-0.75 | in=$0.50 | positions=- | PAID
+5. Frank | balance=$19.25 | start=$20.00 | net=-0.75 | in=$0.50 | positions=- | PAID
+6. Bobby | balance=$19.25 | start=$20.00 | net=-0.75 | in=$0.50 | positions=- | PAID
+7. Patty | balance=$17.00 | start=$20.00 | net=-3.00 | in=$0.50 | positions=- | PAID
+8. Viscous | balance=$10.25 | start=$20.00 | net=-9.75 | in=$0.50 | positions=- | PAID
+9. Carl | balance=$10.25 | start=$20.00 | net=-9.75 | in=$0.50 | positions=- | PAID
+10. Phil | balance=$10.25 | start=$20.00 | net=-9.75 | in=$0.50 | positions=- | PAID
+11. Todd | balance=$10.25 | start=$20.00 | net=-9.75 | in=$0.50 | positions=- | PAID
+12. Dave | balance=$10.25 | start=$20.00 | net=-9.75 | in=$0.50 | positions=- | PAID
+13. Cindy | balance=$10.25 | start=$20.00 | net=-9.75 | in=$0.50 | positions=- | PAID
+14. Cheryl | balance=$10.25 | start=$20.00 | net=-9.75 | in=$0.50 | positions=- | PAID
+15. Randy | balance=$10.25 | start=$20.00 | net=-9.75 | in=$0.50 | positions=- | PAID
+16. Janet | balance=$10.25 | start=$20.00 | net=-9.75 | in=$0.50 | positions=- | PAID

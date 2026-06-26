@@ -1,0 +1,852 @@
+{
+  "currentStage": "PRE_BET",
+  "players": [
+    {
+      "id": "ee851754-dd6b-4ff0-afdc-4129f8e157d2",
+      "socketId": "bot-1782505320042-mnjsdqss",
+      "connected": true,
+      "displayName": "Patty",
+      "realName": "bot_1782505320042_mug5bb",
+      "denomination": "quarters",
+      "funStatement": "Debug bot",
+      "startingBalance": 20,
+      "balance": 17,
+      "skipFoldTokenAvailable": false,
+      "paidEntry": true,
+      "skippedRace": false,
+      "allIn": false,
+      "folded": false,
+      "contributedThisRace": 0.5,
+      "roundBet": 0,
+      "positions": [],
+      "isBot": true,
+      "favoriteColor": "#5a40b0",
+      "profileImageUrl": null,
+      "drawingImageUrl": null,
+      "drawingPrompt": null,
+      "eliminationState": "alive",
+      "noRevive": false,
+      "eliminationSummary": null,
+      "balanceHistory": [
+        {
+          "race": 1,
+          "balance": 17.5
+        }
+      ],
+      "passwordHash": null,
+      "salt": null
+    },
+    {
+      "id": "a3d5d36b-1147-4f70-b9ad-343c25d660cd",
+      "socketId": "bot-1782505320043-tz2ixsri",
+      "connected": true,
+      "displayName": "Brenda",
+      "realName": "bot_1782505320043_ru31ql",
+      "denomination": "quarters",
+      "funStatement": "Debug bot",
+      "startingBalance": 20,
+      "balance": 106,
+      "skipFoldTokenAvailable": true,
+      "paidEntry": true,
+      "skippedRace": false,
+      "allIn": false,
+      "folded": false,
+      "contributedThisRace": 0.5,
+      "roundBet": 0,
+      "positions": [],
+      "isBot": true,
+      "favoriteColor": "#38f5fb",
+      "profileImageUrl": null,
+      "drawingImageUrl": null,
+      "drawingPrompt": null,
+      "eliminationState": "alive",
+      "noRevive": false,
+      "eliminationSummary": null,
+      "balanceHistory": [
+        {
+          "race": 1,
+          "balance": 106.5
+        }
+      ],
+      "passwordHash": null,
+      "salt": null
+    },
+    {
+      "id": "8591e3a0-47d4-4ee7-a230-e0278b43ecb3",
+      "socketId": "bot-1782505320043-s390cyu0",
+      "connected": true,
+      "displayName": "Viscous",
+      "realName": "bot_1782505320043_zilfzu",
+      "denomination": "quarters",
+      "funStatement": "Debug bot",
+      "startingBalance": 20,
+      "balance": 10.25,
+      "skipFoldTokenAvailable": true,
+      "paidEntry": true,
+      "skippedRace": false,
+      "allIn": false,
+      "folded": false,
+      "contributedThisRace": 0.5,
+      "roundBet": 0,
+      "positions": [],
+      "isBot": true,
+      "favoriteColor": "#d41fe9",
+      "profileImageUrl": null,
+      "drawingImageUrl": null,
+      "drawingPrompt": null,
+      "eliminationState": "alive",
+      "noRevive": false,
+      "eliminationSummary": null,
+      "balanceHistory": [
+        {
+          "race": 1,
+          "balance": 10.75
+        }
+      ],
+      "passwordHash": null,
+      "salt": null
+    },
+    {
+      "id": "f4bb3569-2007-4aaa-810f-89532f1837e9",
+      "socketId": "bot-1782505320043-5m7qdp07",
+      "connected": true,
+      "displayName": "Roger",
+      "realName": "bot_1782505320043_oz40tf",
+      "denomination": "quarters",
+      "funStatement": "Debug bot",
+      "startingBalance": 20,
+      "balance": 19.5,
+      "skipFoldTokenAvailable": false,
+      "paidEntry": true,
+      "skippedRace": false,
+      "allIn": false,
+      "folded": false,
+      "contributedThisRace": 0.5,
+      "roundBet": 0,
+      "positions": [],
+      "isBot": true,
+      "favoriteColor": "#6ae3f0",
+      "profileImageUrl": null,
+      "drawingImageUrl": null,
+      "drawingPrompt": null,
+      "eliminationState": "alive",
+      "noRevive": false,
+      "eliminationSummary": null,
+      "balanceHistory": [
+        {
+          "race": 1,
+          "balance": 20
+        }
+      ],
+      "passwordHash": null,
+      "salt": null
+    },
+    {
+      "id": "ba2640ed-24ec-4ab7-8182-b9a6ee9cc255",
+      "socketId": "bot-1782505320193-e36u0aew",
+      "connected": true,
+      "displayName": "Carl",
+      "realName": "bot_1782505320193_8vpl2m",
+      "denomination": "quarters",
+      "funStatement": "Debug bot",
+      "startingBalance": 20,
+      "balance": 10.25,
+      "skipFoldTokenAvailable": true,
+      "paidEntry": true,
+      "skippedRace": false,
+      "allIn": false,
+      "folded": false,
+      "contributedThisRace": 0.5,
+      "roundBet": 0,
+      "positions": [],
+      "isBot": true,
+      "favoriteColor": "#70d6e3",
+      "profileImageUrl": null,
+      "drawingImageUrl": null,
+      "drawingPrompt": null,
+      "eliminationState": "alive",
+      "noRevive": false,
+      "eliminationSummary": null,
+      "balanceHistory": [
+        {
+          "race": 1,
+          "balance": 10.75
+        }
+      ],
+      "passwordHash": null,
+      "salt": null
+    },
+    {
+      "id": "ed7becd1-6834-4585-a3da-4dedde7fbf10",
+      "socketId": "bot-1782505320193-pgigx6cz",
+      "connected": true,
+      "displayName": "Phil",
+      "realName": "bot_1782505320193_fucial",
+      "denomination": "quarters",
+      "funStatement": "Debug bot",
+      "startingBalance": 20,
+      "balance": 10.25,
+      "skipFoldTokenAvailable": true,
+      "paidEntry": true,
+      "skippedRace": false,
+      "allIn": false,
+      "folded": false,
+      "contributedThisRace": 0.5,
+      "roundBet": 0,
+      "positions": [],
+      "isBot": true,
+      "favoriteColor": "#e1fc37",
+      "profileImageUrl": null,
+      "drawingImageUrl": null,
+      "drawingPrompt": null,
+      "eliminationState": "alive",
+      "noRevive": false,
+      "eliminationSummary": null,
+      "balanceHistory": [
+        {
+          "race": 1,
+          "balance": 10.75
+        }
+      ],
+      "passwordHash": null,
+      "salt": null
+    },
+    {
+      "id": "f24b8c01-70f9-4322-8595-490c7d996783",
+      "socketId": "bot-1782505320193-w46noq09",
+      "connected": true,
+      "displayName": "Todd",
+      "realName": "bot_1782505320193_lch4x2",
+      "denomination": "quarters",
+      "funStatement": "Debug bot",
+      "startingBalance": 20,
+      "balance": 10.25,
+      "skipFoldTokenAvailable": true,
+      "paidEntry": true,
+      "skippedRace": false,
+      "allIn": false,
+      "folded": false,
+      "contributedThisRace": 0.5,
+      "roundBet": 0,
+      "positions": [],
+      "isBot": true,
+      "favoriteColor": "#391a37",
+      "profileImageUrl": null,
+      "drawingImageUrl": null,
+      "drawingPrompt": null,
+      "eliminationState": "alive",
+      "noRevive": false,
+      "eliminationSummary": null,
+      "balanceHistory": [
+        {
+          "race": 1,
+          "balance": 10.75
+        }
+      ],
+      "passwordHash": null,
+      "salt": null
+    },
+    {
+      "id": "c18393fd-c40c-4d48-a540-89872619d3a5",
+      "socketId": "bot-1782505320193-ngbs38ga",
+      "connected": true,
+      "displayName": "Peggy",
+      "realName": "bot_1782505320193_kroksa",
+      "denomination": "quarters",
+      "funStatement": "Debug bot",
+      "startingBalance": 20,
+      "balance": 19.25,
+      "skipFoldTokenAvailable": false,
+      "paidEntry": true,
+      "skippedRace": false,
+      "allIn": false,
+      "folded": false,
+      "contributedThisRace": 0.5,
+      "roundBet": 0,
+      "positions": [],
+      "isBot": true,
+      "favoriteColor": "#a52f6f",
+      "profileImageUrl": null,
+      "drawingImageUrl": null,
+      "drawingPrompt": null,
+      "eliminationState": "alive",
+      "noRevive": false,
+      "eliminationSummary": null,
+      "balanceHistory": [
+        {
+          "race": 1,
+          "balance": 19.75
+        }
+      ],
+      "passwordHash": null,
+      "salt": null
+    },
+    {
+      "id": "c987ba8d-75ae-428a-9155-486f7c4fe671",
+      "socketId": "bot-1782505320360-tj4rin15",
+      "connected": true,
+      "displayName": "Frank",
+      "realName": "bot_1782505320360_ayr6la",
+      "denomination": "quarters",
+      "funStatement": "Debug bot",
+      "startingBalance": 20,
+      "balance": 19.25,
+      "skipFoldTokenAvailable": false,
+      "paidEntry": true,
+      "skippedRace": false,
+      "allIn": false,
+      "folded": false,
+      "contributedThisRace": 0.5,
+      "roundBet": 0,
+      "positions": [],
+      "isBot": true,
+      "favoriteColor": "#16f822",
+      "profileImageUrl": null,
+      "drawingImageUrl": null,
+      "drawingPrompt": null,
+      "eliminationState": "alive",
+      "noRevive": false,
+      "eliminationSummary": null,
+      "balanceHistory": [
+        {
+          "race": 1,
+          "balance": 19.75
+        }
+      ],
+      "passwordHash": null,
+      "salt": null
+    },
+    {
+      "id": "fbff05e9-e2e5-4079-bc71-73c0c1f5466c",
+      "socketId": "bot-1782505320360-s8dupy05",
+      "connected": true,
+      "displayName": "Bobby",
+      "realName": "bot_1782505320360_2cd648",
+      "denomination": "quarters",
+      "funStatement": "Debug bot",
+      "startingBalance": 20,
+      "balance": 19.25,
+      "skipFoldTokenAvailable": false,
+      "paidEntry": true,
+      "skippedRace": false,
+      "allIn": false,
+      "folded": false,
+      "contributedThisRace": 0.5,
+      "roundBet": 0,
+      "positions": [],
+      "isBot": true,
+      "favoriteColor": "#ed81ab",
+      "profileImageUrl": null,
+      "drawingImageUrl": null,
+      "drawingPrompt": null,
+      "eliminationState": "alive",
+      "noRevive": false,
+      "eliminationSummary": null,
+      "balanceHistory": [
+        {
+          "race": 1,
+          "balance": 19.75
+        }
+      ],
+      "passwordHash": null,
+      "salt": null
+    },
+    {
+      "id": "258d6519-5cb9-4c89-b8f7-0e89dcc09bd0",
+      "socketId": "bot-1782505320360-7wlyf4nn",
+      "connected": true,
+      "displayName": "Dave",
+      "realName": "bot_1782505320360_ybaiex",
+      "denomination": "quarters",
+      "funStatement": "Debug bot",
+      "startingBalance": 20,
+      "balance": 10.25,
+      "skipFoldTokenAvailable": true,
+      "paidEntry": true,
+      "skippedRace": false,
+      "allIn": false,
+      "folded": false,
+      "contributedThisRace": 0.5,
+      "roundBet": 0,
+      "positions": [],
+      "isBot": true,
+      "favoriteColor": "#3175ed",
+      "profileImageUrl": null,
+      "drawingImageUrl": null,
+      "drawingPrompt": null,
+      "eliminationState": "alive",
+      "noRevive": false,
+      "eliminationSummary": null,
+      "balanceHistory": [
+        {
+          "race": 1,
+          "balance": 10.75
+        }
+      ],
+      "passwordHash": null,
+      "salt": null
+    },
+    {
+      "id": "120e3d7e-8493-4f35-a2a9-1cffae0cff76",
+      "socketId": "bot-1782505320360-x0xb6n7d",
+      "connected": true,
+      "displayName": "Nancy",
+      "realName": "bot_1782505320360_83eaqt",
+      "denomination": "quarters",
+      "funStatement": "Debug bot",
+      "startingBalance": 20,
+      "balance": 19.5,
+      "skipFoldTokenAvailable": false,
+      "paidEntry": true,
+      "skippedRace": false,
+      "allIn": false,
+      "folded": false,
+      "contributedThisRace": 0.5,
+      "roundBet": 0,
+      "positions": [],
+      "isBot": true,
+      "favoriteColor": "#ad01b2",
+      "profileImageUrl": null,
+      "drawingImageUrl": null,
+      "drawingPrompt": null,
+      "eliminationState": "alive",
+      "noRevive": false,
+      "eliminationSummary": null,
+      "balanceHistory": [
+        {
+          "race": 1,
+          "balance": 20
+        }
+      ],
+      "passwordHash": null,
+      "salt": null
+    },
+    {
+      "id": "1d2367a8-8803-4222-acc3-c13e8785b9eb",
+      "socketId": "bot-1782505320505-z5xno8kx",
+      "connected": true,
+      "displayName": "Cindy",
+      "realName": "bot_1782505320505_kx82aw",
+      "denomination": "quarters",
+      "funStatement": "Debug bot",
+      "startingBalance": 20,
+      "balance": 10.25,
+      "skipFoldTokenAvailable": true,
+      "paidEntry": true,
+      "skippedRace": false,
+      "allIn": false,
+      "folded": false,
+      "contributedThisRace": 0.5,
+      "roundBet": 0,
+      "positions": [],
+      "isBot": true,
+      "favoriteColor": "#13b83a",
+      "profileImageUrl": null,
+      "drawingImageUrl": null,
+      "drawingPrompt": null,
+      "eliminationState": "alive",
+      "noRevive": false,
+      "eliminationSummary": null,
+      "balanceHistory": [
+        {
+          "race": 1,
+          "balance": 10.75
+        }
+      ],
+      "passwordHash": null,
+      "salt": null
+    },
+    {
+      "id": "ff1bce9e-8565-48b9-adcd-4d9d2c4e597d",
+      "socketId": "bot-1782505320505-pmv16e1a",
+      "connected": true,
+      "displayName": "Cheryl",
+      "realName": "bot_1782505320505_dystos",
+      "denomination": "quarters",
+      "funStatement": "Debug bot",
+      "startingBalance": 20,
+      "balance": 10.25,
+      "skipFoldTokenAvailable": true,
+      "paidEntry": true,
+      "skippedRace": false,
+      "allIn": false,
+      "folded": false,
+      "contributedThisRace": 0.5,
+      "roundBet": 0,
+      "positions": [],
+      "isBot": true,
+      "favoriteColor": "#d1ec3a",
+      "profileImageUrl": null,
+      "drawingImageUrl": null,
+      "drawingPrompt": null,
+      "eliminationState": "alive",
+      "noRevive": false,
+      "eliminationSummary": null,
+      "balanceHistory": [
+        {
+          "race": 1,
+          "balance": 10.75
+        }
+      ],
+      "passwordHash": null,
+      "salt": null
+    },
+    {
+      "id": "26f0a957-38b0-4a88-826d-5cca8bf03d18",
+      "socketId": "bot-1782505320505-pfhwx5ax",
+      "connected": true,
+      "displayName": "Randy",
+      "realName": "bot_1782505320505_k2386u",
+      "denomination": "quarters",
+      "funStatement": "Debug bot",
+      "startingBalance": 20,
+      "balance": 10.25,
+      "skipFoldTokenAvailable": true,
+      "paidEntry": true,
+      "skippedRace": false,
+      "allIn": false,
+      "folded": false,
+      "contributedThisRace": 0.5,
+      "roundBet": 0,
+      "positions": [],
+      "isBot": true,
+      "favoriteColor": "#b542b4",
+      "profileImageUrl": null,
+      "drawingImageUrl": null,
+      "drawingPrompt": null,
+      "eliminationState": "alive",
+      "noRevive": false,
+      "eliminationSummary": null,
+      "balanceHistory": [
+        {
+          "race": 1,
+          "balance": 10.75
+        }
+      ],
+      "passwordHash": null,
+      "salt": null
+    },
+    {
+      "id": "c2e491e6-d0f7-4f71-9583-189a776c44e5",
+      "socketId": "bot-1782505320505-z2y9c49e",
+      "connected": true,
+      "displayName": "Janet",
+      "realName": "bot_1782505320505_4pix7s",
+      "denomination": "quarters",
+      "funStatement": "Debug bot",
+      "startingBalance": 20,
+      "balance": 10.25,
+      "skipFoldTokenAvailable": true,
+      "paidEntry": true,
+      "skippedRace": false,
+      "allIn": false,
+      "folded": false,
+      "contributedThisRace": 0.5,
+      "roundBet": 0,
+      "positions": [],
+      "isBot": true,
+      "favoriteColor": "#e0bbfd",
+      "profileImageUrl": null,
+      "drawingImageUrl": null,
+      "drawingPrompt": null,
+      "eliminationState": "alive",
+      "noRevive": false,
+      "eliminationSummary": null,
+      "balanceHistory": [
+        {
+          "race": 1,
+          "balance": 10.75
+        }
+      ],
+      "passwordHash": null,
+      "salt": null
+    }
+  ],
+  "hostSettings": {
+    "maxCashCap": 20,
+    "lobbyOpen": true,
+    "resurrectionBaseCash": 1
+  },
+  "raceNumber": 2,
+  "pot": 8,
+  "cascadeSpinsThisRound": 0,
+  "wheelOrder": [
+    "ee851754-dd6b-4ff0-afdc-4129f8e157d2",
+    "a3d5d36b-1147-4f70-b9ad-343c25d660cd",
+    "8591e3a0-47d4-4ee7-a230-e0278b43ecb3",
+    "ba2640ed-24ec-4ab7-8182-b9a6ee9cc255",
+    "ed7becd1-6834-4585-a3da-4dedde7fbf10",
+    "f24b8c01-70f9-4322-8595-490c7d996783",
+    "c18393fd-c40c-4d48-a540-89872619d3a5",
+    "c987ba8d-75ae-428a-9155-486f7c4fe671",
+    "fbff05e9-e2e5-4079-bc71-73c0c1f5466c",
+    "258d6519-5cb9-4c89-b8f7-0e89dcc09bd0",
+    "1d2367a8-8803-4222-acc3-c13e8785b9eb",
+    "ff1bce9e-8565-48b9-adcd-4d9d2c4e597d",
+    "26f0a957-38b0-4a88-826d-5cca8bf03d18",
+    "c2e491e6-d0f7-4f71-9583-189a776c44e5"
+  ],
+  "entryFee": 0.5,
+  "positionDraft": null,
+  "bettingState": {
+    "currentBet": 0,
+    "playersInRound": [],
+    "actionQueue": [],
+    "betCap": 0,
+    "raiseLockedPlayers": {},
+    "initialBetCap": 0,
+    "lastBetActions": {},
+    "lastRaiserId": null
+  },
+  "raceResult": null,
+  "preservePositionsNextRace": false,
+  "newlyEliminatedIds": [],
+  "kingId": null,
+  "publicJoinUrl": "https://zones-safari-optics-landscape.trycloudflare.com",
+  "raceLog": [
+    {
+      "raceNumber": 1,
+      "raceResult": "6",
+      "entryFee": 0.25,
+      "potBeforePayout": 95.75,
+      "players": [
+        {
+          "id": "ee851754-dd6b-4ff0-afdc-4129f8e157d2",
+          "displayName": "Patty",
+          "balanceBefore": 17.5,
+          "balanceAfter": 17.5,
+          "positions": [
+            "9"
+          ],
+          "paidEntry": true,
+          "skippedRace": false,
+          "folded": true,
+          "allIn": false,
+          "contributedThisRace": 2.5,
+          "won": false
+        },
+        {
+          "id": "a3d5d36b-1147-4f70-b9ad-343c25d660cd",
+          "displayName": "Brenda",
+          "balanceBefore": 10.75,
+          "balanceAfter": 106.5,
+          "positions": [
+            "6"
+          ],
+          "paidEntry": true,
+          "skippedRace": false,
+          "folded": false,
+          "allIn": false,
+          "contributedThisRace": 9.25,
+          "won": true
+        },
+        {
+          "id": "8591e3a0-47d4-4ee7-a230-e0278b43ecb3",
+          "displayName": "Viscous",
+          "balanceBefore": 10.75,
+          "balanceAfter": 10.75,
+          "positions": [
+            "5"
+          ],
+          "paidEntry": true,
+          "skippedRace": false,
+          "folded": false,
+          "allIn": false,
+          "contributedThisRace": 9.25,
+          "won": false
+        },
+        {
+          "id": "f4bb3569-2007-4aaa-810f-89532f1837e9",
+          "displayName": "Roger",
+          "balanceBefore": 20,
+          "balanceAfter": 20,
+          "positions": [],
+          "paidEntry": false,
+          "skippedRace": true,
+          "folded": false,
+          "allIn": false,
+          "contributedThisRace": 0,
+          "won": false
+        },
+        {
+          "id": "ba2640ed-24ec-4ab7-8182-b9a6ee9cc255",
+          "displayName": "Carl",
+          "balanceBefore": 10.75,
+          "balanceAfter": 10.75,
+          "positions": [
+            "DNF"
+          ],
+          "paidEntry": true,
+          "skippedRace": false,
+          "folded": false,
+          "allIn": false,
+          "contributedThisRace": 9.25,
+          "won": false
+        },
+        {
+          "id": "ed7becd1-6834-4585-a3da-4dedde7fbf10",
+          "displayName": "Phil",
+          "balanceBefore": 10.75,
+          "balanceAfter": 10.75,
+          "positions": [
+            "4"
+          ],
+          "paidEntry": true,
+          "skippedRace": false,
+          "folded": false,
+          "allIn": false,
+          "contributedThisRace": 9.25,
+          "won": false
+        },
+        {
+          "id": "f24b8c01-70f9-4322-8595-490c7d996783",
+          "displayName": "Todd",
+          "balanceBefore": 10.75,
+          "balanceAfter": 10.75,
+          "positions": [
+            "5"
+          ],
+          "paidEntry": true,
+          "skippedRace": false,
+          "folded": false,
+          "allIn": false,
+          "contributedThisRace": 9.25,
+          "won": false
+        },
+        {
+          "id": "c18393fd-c40c-4d48-a540-89872619d3a5",
+          "displayName": "Peggy",
+          "balanceBefore": 19.75,
+          "balanceAfter": 19.75,
+          "positions": [
+            "12"
+          ],
+          "paidEntry": true,
+          "skippedRace": false,
+          "folded": true,
+          "allIn": false,
+          "contributedThisRace": 0.25,
+          "won": false
+        },
+        {
+          "id": "c987ba8d-75ae-428a-9155-486f7c4fe671",
+          "displayName": "Frank",
+          "balanceBefore": 19.75,
+          "balanceAfter": 19.75,
+          "positions": [
+            "2"
+          ],
+          "paidEntry": true,
+          "skippedRace": false,
+          "folded": true,
+          "allIn": false,
+          "contributedThisRace": 0.25,
+          "won": false
+        },
+        {
+          "id": "fbff05e9-e2e5-4079-bc71-73c0c1f5466c",
+          "displayName": "Bobby",
+          "balanceBefore": 19.75,
+          "balanceAfter": 19.75,
+          "positions": [
+            "4"
+          ],
+          "paidEntry": true,
+          "skippedRace": false,
+          "folded": true,
+          "allIn": false,
+          "contributedThisRace": 0.25,
+          "won": false
+        },
+        {
+          "id": "258d6519-5cb9-4c89-b8f7-0e89dcc09bd0",
+          "displayName": "Dave",
+          "balanceBefore": 10.75,
+          "balanceAfter": 10.75,
+          "positions": [
+            "8"
+          ],
+          "paidEntry": true,
+          "skippedRace": false,
+          "folded": false,
+          "allIn": false,
+          "contributedThisRace": 9.25,
+          "won": false
+        },
+        {
+          "id": "120e3d7e-8493-4f35-a2a9-1cffae0cff76",
+          "displayName": "Nancy",
+          "balanceBefore": 20,
+          "balanceAfter": 20,
+          "positions": [],
+          "paidEntry": false,
+          "skippedRace": true,
+          "folded": false,
+          "allIn": false,
+          "contributedThisRace": 0,
+          "won": false
+        },
+        {
+          "id": "1d2367a8-8803-4222-acc3-c13e8785b9eb",
+          "displayName": "Cindy",
+          "balanceBefore": 10.75,
+          "balanceAfter": 10.75,
+          "positions": [
+            "7"
+          ],
+          "paidEntry": true,
+          "skippedRace": false,
+          "folded": false,
+          "allIn": false,
+          "contributedThisRace": 9.25,
+          "won": false
+        },
+        {
+          "id": "ff1bce9e-8565-48b9-adcd-4d9d2c4e597d",
+          "displayName": "Cheryl",
+          "balanceBefore": 10.75,
+          "balanceAfter": 10.75,
+          "positions": [
+            "11"
+          ],
+          "paidEntry": true,
+          "skippedRace": false,
+          "folded": false,
+          "allIn": false,
+          "contributedThisRace": 9.25,
+          "won": false
+        },
+        {
+          "id": "26f0a957-38b0-4a88-826d-5cca8bf03d18",
+          "displayName": "Randy",
+          "balanceBefore": 10.75,
+          "balanceAfter": 10.75,
+          "positions": [
+            "5"
+          ],
+          "paidEntry": true,
+          "skippedRace": false,
+          "folded": false,
+          "allIn": false,
+          "contributedThisRace": 9.25,
+          "won": false
+        },
+        {
+          "id": "c2e491e6-d0f7-4f71-9583-189a776c44e5",
+          "displayName": "Janet",
+          "balanceBefore": 10.75,
+          "balanceAfter": 10.75,
+          "positions": [
+            "1"
+          ],
+          "paidEntry": true,
+          "skippedRace": false,
+          "folded": false,
+          "allIn": false,
+          "contributedThisRace": 9.25,
+          "won": false
+        }
+      ]
+    }
+  ]
+}
